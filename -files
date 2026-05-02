@@ -1,0 +1,12 @@
+ .gitignore                        | 35 [32m+++++++++++++++++++++++++++++++++++[m
+ README.md                         | 31 [32m+++++++++++++++++++++++++++++++[m
+ requirements.txt                  |  9 [32m+++++++++[m
+ src/tec_agents/__init__.py        |  0
+ src/tec_agents/agents/__init__.py |  0
+ src/tec_agents/data/__init__.py   |  0
+ src/tec_agents/eval/__init__.py   |  0
+ src/tec_agents/llm/__init__.py    |  0
+ src/tec_agents/mcp/__init__.py    |  0
+ src/tec_agents/tools/__init__.py  |  0
+ src/tec_agents/utils/__init__.py  |  0
+ 11 files changed, 75 insertions(+)
