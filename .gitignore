@@ -216,3 +216,38 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# TEC raw/intermediate data
+data/raw/
+data/cache/
+*.ionex
+*.IONEX
+*.INX
+*.INX.gz
+*.Z
+*.gz
+
+# Large processed data
+data/processed/*.parquet
+data/processed/*.csv
+data/processed/*.nc
+data/processed/*.zarr/
+
+# Experiment outputs
+outputs/traces/
+outputs/metrics/
+outputs/tables/
+outputs/figures/
+outputs/reports/
+
+# Models and local secrets
+models/
+*.safetensors
+*.bin
+*.gguf
+.env
+secrets.json
+
+# Notebook checkpoints
+.ipynb_checkpoints/

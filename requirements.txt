@@ -1,0 +1,9 @@
+numpy
+pandas
+pyarrow
+pydantic
+python-dateutil
+matplotlib
+xarray
+requests
+tqdm
