@@ -95,10 +95,9 @@ class ExperimentRunner:
     The runner assumes that the agent result object has these fields:
     - tool_results;
     - trace;
-    - answer.
-
-    This matches RuleBasedSingleAgent. Later, LLM-based agents should return
-    the same result shape or be adapted before metric calculation.
+    - answer;
+    - parsed_task;
+    - orchestration_steps.
     """
 
     def __init__(
@@ -147,6 +146,7 @@ class ExperimentRunner:
     def run_one(self, task: EvalTask) -> tuple[ExperimentRecord, MetricResult]:
         """Run one task through gold runner, agent and metrics."""
 
+        task_dict = task_to_dict(task)
         gold = self.gold_runner.run(task)
 
         if gold.status != "success" or gold.result is None:
@@ -159,7 +159,7 @@ class ExperimentRunner:
             )
 
             record = ExperimentRecord(
-                task=task_to_dict(task),
+                task=task_dict,
                 gold=gold.to_dict(),
                 agent={
                     "status": "skipped",
@@ -167,6 +167,7 @@ class ExperimentRunner:
                     "parsed_task": None,
                     "tool_results": None,
                     "trace": None,
+                    "orchestration_steps": [],
                     "error": "gold_runner_failed",
                 },
                 metrics=metric.to_dict(),
@@ -179,6 +180,10 @@ class ExperimentRunner:
 
             agent_output = self.agent.run(task.query)
 
+            orchestration_steps = _steps_to_dicts(
+                getattr(agent_output, "orchestration_steps", [])
+            )
+
             agent_payload = {
                 "status": "success",
                 "answer": getattr(agent_output, "answer", ""),
@@ -187,6 +192,7 @@ class ExperimentRunner:
                 ),
                 "tool_results": getattr(agent_output, "tool_results", None),
                 "trace": getattr(agent_output, "trace", None),
+                "orchestration_steps": orchestration_steps,
                 "error": None,
             }
 
@@ -196,6 +202,9 @@ class ExperimentRunner:
                 agent_result=agent_payload["tool_results"],
                 gold_result=gold.result,
                 agent_trace=agent_payload["trace"],
+                task=task_dict,
+                parsed_task=agent_payload["parsed_task"],
+                orchestration_steps=orchestration_steps,
             )
 
         except Exception as exc:
@@ -205,6 +214,7 @@ class ExperimentRunner:
                 "parsed_task": None,
                 "tool_results": None,
                 "trace": None,
+                "orchestration_steps": [],
                 "error": str(exc),
             }
 
@@ -217,7 +227,7 @@ class ExperimentRunner:
             )
 
         record = ExperimentRecord(
-            task=task_to_dict(task),
+            task=task_dict,
             gold=gold.to_dict(),
             agent=agent_payload,
             metrics=metric.to_dict(),
@@ -257,3 +267,29 @@ def _safe_model_or_dataclass_to_dict(obj: Any) -> dict[str, Any] | None:
         return obj
 
     return {"repr": repr(obj)}
+
+
+def _steps_to_dicts(steps: Any) -> list[dict[str, Any]]:
+    """Convert orchestration step objects to JSON-serializable dictionaries."""
+
+    if steps is None:
+        return []
+
+    out: list[dict[str, Any]] = []
+
+    for step in steps:
+        if hasattr(step, "model_dump"):
+            out.append(step.model_dump())
+        elif hasattr(step, "__dataclass_fields__"):
+            out.append(
+                {
+                    field_name: getattr(step, field_name)
+                    for field_name in step.__dataclass_fields__
+                }
+            )
+        elif isinstance(step, dict):
+            out.append(step)
+        else:
+            out.append({"repr": repr(step)})
+
+    return out

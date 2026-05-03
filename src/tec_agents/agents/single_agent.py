@@ -64,6 +64,15 @@ class ParsedSingleAgentTask:
 
 
 @dataclass
+class SingleAgentStep:
+    """One high-level single-agent orchestration step."""
+
+    node: str
+    action: str
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class SingleAgentResult:
     """Result of a single-agent run."""
 
@@ -71,6 +80,7 @@ class SingleAgentResult:
     parsed_task: ParsedSingleAgentTask
     tool_results: dict[str, Any] = field(default_factory=dict)
     trace: dict[str, Any] = field(default_factory=dict)
+    orchestration_steps: list[SingleAgentStep] = field(default_factory=list)
 
 
 class RuleBasedSingleAgent:
@@ -122,11 +132,28 @@ class RuleBasedSingleAgent:
                 "This baseline currently supports high_tec and compare_regions."
             )
 
+        orchestration_steps = [
+            SingleAgentStep(
+                node=self.agent_name,
+                action="parse_route_execute_and_report",
+                details={
+                    "task_type": parsed.task_type,
+                    "region_id": parsed.region_id,
+                    "region_ids": parsed.region_ids,
+                    "start": parsed.start,
+                    "end": parsed.end,
+                    "q": parsed.q,
+                    "selected_worker": "single_agent",
+                },
+            )
+        ]
+
         return SingleAgentResult(
             answer=answer,
             parsed_task=parsed,
             tool_results=tool_results,
             trace=self.client.get_trace(),
+            orchestration_steps=orchestration_steps,
         )
 
     def parse_query(self, query: str) -> ParsedSingleAgentTask:
@@ -234,7 +261,6 @@ class RuleBasedSingleAgent:
             step=1,
         )
 
-        # Return the direct tool result shape. metrics.py supports this shape.
         return comparison_result
 
     def _format_high_tec_answer(
