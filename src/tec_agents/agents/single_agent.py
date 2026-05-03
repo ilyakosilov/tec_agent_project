@@ -91,6 +91,18 @@ class RuleBasedSingleAgent:
         self.dataset_ref = dataset_ref
         self.agent_name = agent_name
 
+    def reset(self) -> None:
+        """
+        Reset underlying MCP client state if supported.
+
+        This is important for evaluation: each task should have an isolated
+        tool store and trace, otherwise tool-call metrics accumulate across
+        tasks and become inflated.
+        """
+
+        if hasattr(self.client, "reset"):
+            self.client.reset()
+
     def run(self, query: str) -> SingleAgentResult:
         """Run the agent on one user query."""
 

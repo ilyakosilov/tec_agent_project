@@ -8,7 +8,7 @@ This module runs evaluation tasks through:
 3. metric comparison;
 4. structured experiment records.
 
-It is the first reusable experiment loop for comparing orchestration variants.
+It is the reusable experiment loop for comparing orchestration variants.
 """
 
 from __future__ import annotations
@@ -18,8 +18,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from tec_agents.eval.gold_runner import GoldResult, GoldRunner
-from tec_agents.eval.metrics import MetricResult, compare_agent_to_gold, summarize_metric_results
+from tec_agents.eval.gold_runner import GoldRunner
+from tec_agents.eval.metrics import (
+    MetricResult,
+    compare_agent_to_gold,
+    summarize_metric_results,
+)
 from tec_agents.eval.task_set import EvalTask, task_to_dict
 
 
@@ -28,6 +32,9 @@ class AgentProtocol(Protocol):
 
     def run(self, query: str) -> Any:
         """Run agent on a natural-language query."""
+
+    def reset(self) -> None:
+        """Reset agent state before an evaluation task."""
 
 
 @dataclass
@@ -86,9 +93,9 @@ class ExperimentRunner:
     Run evaluation tasks for one agent.
 
     The runner assumes that the agent result object has these fields:
-    - tool_results
-    - trace
-    - answer
+    - tool_results;
+    - trace;
+    - answer.
 
     This matches RuleBasedSingleAgent. Later, LLM-based agents should return
     the same result shape or be adapted before metric calculation.
@@ -157,6 +164,7 @@ class ExperimentRunner:
                 agent={
                     "status": "skipped",
                     "answer": "",
+                    "parsed_task": None,
                     "tool_results": None,
                     "trace": None,
                     "error": "gold_runner_failed",
@@ -167,6 +175,8 @@ class ExperimentRunner:
             return record, metric
 
         try:
+            self._reset_agent_before_task()
+
             agent_output = self.agent.run(task.query)
 
             agent_payload = {
@@ -214,6 +224,18 @@ class ExperimentRunner:
         )
 
         return record, metric
+
+    def _reset_agent_before_task(self) -> None:
+        """
+        Reset agent state before each task if the agent supports reset().
+
+        This keeps per-task traces independent. Without this reset, tool-call
+        metrics accumulate across tasks and become inflated.
+        """
+
+        reset_fn = getattr(self.agent, "reset", None)
+        if callable(reset_fn):
+            reset_fn()
 
 
 def _safe_model_or_dataclass_to_dict(obj: Any) -> dict[str, Any] | None:
