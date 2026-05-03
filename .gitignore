@@ -253,3 +253,5 @@ secrets.json
 # Notebook checkpoints
 .ipynb_checkpoints/
 .installers
+
+data/examples
