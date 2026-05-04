@@ -26,8 +26,12 @@ from tec_agents.tools.schemas import (
     BuildReportOutput,
     CompareRegionsInput,
     CompareRegionsOutput,
+    CompareStatsInput,
+    CompareStatsOutput,
     ComputeHighThresholdInput,
     ComputeHighThresholdOutput,
+    ComputeSeriesStatsInput,
+    ComputeSeriesStatsOutput,
     ComputeStabilityThresholdsInput,
     ComputeStabilityThresholdsOutput,
     DetectHighIntervalsInput,
@@ -176,6 +180,26 @@ def build_tool_registry() -> ToolRegistry:
                 input_model=SeriesProfileInput,
                 output_model=SeriesProfileOutput,
                 func=tec_tools.tec_series_profile,
+            ),
+            ToolSpec(
+                name="tec_compute_series_stats",
+                description=(
+                    "Compute selected deterministic statistics for a previously "
+                    "loaded TEC time series and return a stats_id handle."
+                ),
+                input_model=ComputeSeriesStatsInput,
+                output_model=ComputeSeriesStatsOutput,
+                func=tec_tools.tec_compute_series_stats,
+            ),
+            ToolSpec(
+                name="tec_compare_stats",
+                description=(
+                    "Compare two or more previously computed TEC statistics "
+                    "handles and return structured pairwise metric deltas."
+                ),
+                input_model=CompareStatsInput,
+                output_model=CompareStatsOutput,
+                func=tec_tools.tec_compare_stats,
             ),
             ToolSpec(
                 name="tec_compute_high_threshold",

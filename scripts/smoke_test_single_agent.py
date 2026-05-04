@@ -27,6 +27,15 @@ from tec_agents.mcp.client import LocalMCPClient
 from tec_agents.mcp.server import build_local_mcp_server
 
 
+EXPECTED_COMPARE_SEQUENCE = [
+    "tec_get_timeseries",
+    "tec_compute_series_stats",
+    "tec_get_timeseries",
+    "tec_compute_series_stats",
+    "tec_compare_stats",
+]
+
+
 def build_tiny_dataset(path: Path) -> None:
     """Create a small synthetic regional TEC dataset for local testing."""
 
@@ -99,6 +108,24 @@ def main() -> None:
     assert result.parsed_task.start == "2024-03-01"
     assert result.parsed_task.end == "2024-04-01"
     assert result.tool_results["intervals"]["n_intervals"] >= 1
+
+    agent.reset()
+
+    compare_query = (
+        "Compare TEC statistics for midlat_europe and highlat_north in March 2024"
+    )
+    compare_result = agent.run(compare_query)
+    compare_sequence = [
+        call["tool_name"]
+        for call in compare_result.trace["calls"]
+    ]
+
+    print("\nCompare trace sequence:")
+    print(compare_sequence)
+
+    assert compare_result.parsed_task.task_type == "compare_regions"
+    assert compare_sequence == EXPECTED_COMPARE_SEQUENCE
+    assert compare_result.tool_results["comparison"]["pairwise_deltas"]
 
     print("\nSingle-agent smoke test finished successfully.")
 

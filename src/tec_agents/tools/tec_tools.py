@@ -21,8 +21,12 @@ from tec_agents.tools.schemas import (
     BuildReportOutput,
     CompareRegionsInput,
     CompareRegionsOutput,
+    CompareStatsInput,
+    CompareStatsOutput,
     ComputeHighThresholdInput,
     ComputeHighThresholdOutput,
+    ComputeSeriesStatsInput,
+    ComputeSeriesStatsOutput,
     ComputeStabilityThresholdsInput,
     ComputeStabilityThresholdsOutput,
     DetectHighIntervalsInput,
@@ -41,6 +45,26 @@ from tec_agents.tools.schemas import (
 )
 
 
+DEFAULT_SERIES_STATS_METRICS = [
+    "mean",
+    "median",
+    "min",
+    "max",
+    "std",
+    "p90",
+    "p95",
+]
+
+DEFAULT_COMPARE_STATS_METRICS = [
+    "mean",
+    "median",
+    "max",
+    "std",
+    "p90",
+    "p95",
+]
+
+
 @dataclass
 class ToolStore:
     """
@@ -51,7 +75,10 @@ class ToolStore:
     """
 
     series: dict[str, pd.Series] = field(default_factory=dict)
+    series_metadata: dict[str, dict[str, Any]] = field(default_factory=dict)
     thresholds: dict[str, dict[str, Any]] = field(default_factory=dict)
+    stats: dict[str, dict[str, Any]] = field(default_factory=dict)
+    comparisons: dict[str, dict[str, Any]] = field(default_factory=dict)
     reports: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
@@ -172,6 +199,7 @@ def tec_get_timeseries(
         series=series,
         freq=args.freq,
     )
+    store.series_metadata[series_id] = metadata.model_dump()
 
     return GetTimeseriesOutput(series_id=series_id, metadata=metadata)
 
@@ -368,6 +396,108 @@ def tec_compute_stability_thresholds(
         max_std=max_std,
         n_windows_used=int(min(len(finite_std), len(finite_delta))),
     )
+
+
+def tec_compute_series_stats(
+    args: ComputeSeriesStatsInput,
+    store: ToolStore,
+) -> ComputeSeriesStatsOutput:
+    """Compute deterministic statistics for a stored TEC time series."""
+
+    series = _get_series_or_raise(args.series_id, store)
+    finite = _finite_values(series)
+    metrics = _normalize_stats_metrics(
+        args.metrics,
+        default=DEFAULT_SERIES_STATS_METRICS,
+    )
+
+    values = _compute_metrics_dict(finite=finite, metrics=metrics)
+    region_id = _series_region_id(args.series_id, store)
+
+    stats_id = _make_id(
+        "stats",
+        {
+            "series_id": args.series_id,
+            "metrics": metrics,
+        },
+    )
+
+    output = ComputeSeriesStatsOutput(
+        stats_id=stats_id,
+        series_id=args.series_id,
+        region_id=region_id,  # type: ignore[arg-type]
+        n_points=int(len(series)),
+        finite_points=int(len(finite)),
+        metrics=values,
+    )
+
+    store.stats[stats_id] = output.model_dump()
+
+    return output
+
+
+def tec_compare_stats(
+    args: CompareStatsInput,
+    store: ToolStore,
+) -> CompareStatsOutput:
+    """Compare previously computed statistics from multiple series."""
+
+    stats_records = [_get_stats_or_raise(stats_id, store) for stats_id in args.stats_ids]
+
+    if args.reference_stats_id is not None:
+        if args.reference_stats_id not in args.stats_ids:
+            raise ValueError("reference_stats_id must be one of stats_ids")
+        _get_stats_or_raise(args.reference_stats_id, store)
+
+    metrics = _normalize_stats_metrics(
+        args.metrics,
+        default=DEFAULT_COMPARE_STATS_METRICS,
+    )
+
+    items = [
+        {
+            "stats_id": str(record["stats_id"]),
+            "series_id": str(record["series_id"]),
+            "region_id": record.get("region_id"),
+            "metrics": {
+                metric: _safe_float((record.get("metrics") or {}).get(metric))
+                for metric in metrics
+            },
+        }
+        for record in stats_records
+    ]
+
+    pairwise_deltas = _compare_stats_pairwise_deltas(
+        items=items,
+        metrics=metrics,
+        reference_stats_id=args.reference_stats_id,
+    )
+
+    comparison_id = _make_id(
+        "cmpstats",
+        {
+            "stats_ids": args.stats_ids,
+            "reference_stats_id": args.reference_stats_id,
+            "metrics": metrics,
+        },
+    )
+
+    output = CompareStatsOutput(
+        comparison_id=comparison_id,
+        stats_ids=list(args.stats_ids),
+        reference_stats_id=args.reference_stats_id,
+        regions=[
+            str(item["region_id"])
+            for item in items
+            if item.get("region_id") is not None
+        ],
+        items=items,  # type: ignore[arg-type]
+        pairwise_deltas=pairwise_deltas,  # type: ignore[arg-type]
+    )
+
+    store.comparisons[comparison_id] = output.model_dump()
+
+    return output
 
 
 def tec_detect_stable_intervals(
@@ -708,6 +838,126 @@ def _get_threshold_or_raise(threshold_id: str, store: ToolStore) -> dict[str, An
         raise ValueError(
             f"Unknown threshold_id: {threshold_id!r}. Known threshold IDs: {known}"
         ) from exc
+
+
+def _get_stats_or_raise(stats_id: str, store: ToolStore) -> dict[str, Any]:
+    """Return stored series statistics or raise a clear error."""
+
+    try:
+        return store.stats[stats_id]
+    except KeyError as exc:
+        known = ", ".join(sorted(store.stats)) or "<none>"
+        raise ValueError(
+            f"Unknown stats_id: {stats_id!r}. Known stats IDs: {known}"
+        ) from exc
+
+
+def _series_region_id(series_id: str, store: ToolStore) -> str | None:
+    """Return region ID associated with a stored series, if known."""
+
+    metadata = store.series_metadata.get(series_id) or {}
+    region_id = metadata.get("region_id")
+    if region_id is not None:
+        return str(region_id)
+
+    series = store.series.get(series_id)
+    if series is not None and series.name is not None:
+        return str(series.name)
+
+    return None
+
+
+def _normalize_stats_metrics(
+    metrics: list[str] | None,
+    *,
+    default: list[str],
+) -> list[str]:
+    """Return a de-duplicated metric list preserving order."""
+
+    selected = metrics or default
+    return list(dict.fromkeys(str(metric) for metric in selected))
+
+
+def _compute_metrics_dict(
+    *,
+    finite: pd.Series,
+    metrics: list[str],
+) -> dict[str, float | None]:
+    """Compute selected JSON-friendly numeric metrics for finite values."""
+
+    result: dict[str, float | None] = {}
+
+    for metric in metrics:
+        if finite.empty:
+            result[metric] = None
+        elif metric == "mean":
+            result[metric] = _safe_float(finite.mean())
+        elif metric == "median":
+            result[metric] = _safe_float(finite.median())
+        elif metric == "min":
+            result[metric] = _safe_float(finite.min())
+        elif metric == "max":
+            result[metric] = _safe_float(finite.max())
+        elif metric == "std":
+            result[metric] = _safe_float(finite.std())
+        elif metric == "p90":
+            result[metric] = _safe_float(finite.quantile(0.90))
+        elif metric == "p95":
+            result[metric] = _safe_float(finite.quantile(0.95))
+        else:
+            raise ValueError(f"Unsupported stats metric: {metric!r}")
+
+    return result
+
+
+def _compare_stats_pairwise_deltas(
+    *,
+    items: list[dict[str, Any]],
+    metrics: list[str],
+    reference_stats_id: str | None,
+) -> list[dict[str, Any]]:
+    """Build pairwise metric deltas for stats comparison output."""
+
+    by_stats_id = {str(item["stats_id"]): item for item in items}
+    pairs: list[tuple[dict[str, Any], dict[str, Any]]] = []
+
+    if reference_stats_id is not None:
+        reference = by_stats_id[reference_stats_id]
+        pairs = [
+            (reference, item)
+            for item in items
+            if item["stats_id"] != reference_stats_id
+        ]
+    else:
+        for left_idx, left in enumerate(items):
+            for right in items[left_idx + 1 :]:
+                pairs.append((left, right))
+
+    deltas: list[dict[str, Any]] = []
+
+    for left, right in pairs:
+        delta: dict[str, float | None] = {}
+
+        for metric in metrics:
+            left_value = (left.get("metrics") or {}).get(metric)
+            right_value = (right.get("metrics") or {}).get(metric)
+
+            if left_value is None or right_value is None:
+                delta[metric] = None
+            else:
+                delta[metric] = _safe_float(float(left_value) - float(right_value))
+
+        deltas.append(
+            {
+                "left_stats_id": left["stats_id"],
+                "right_stats_id": right["stats_id"],
+                "left_region_id": left.get("region_id"),
+                "right_region_id": right.get("region_id"),
+                "delta": delta,
+            }
+        )
+
+    return deltas
 
 
 def _window_points_from_minutes(

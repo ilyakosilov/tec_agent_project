@@ -27,6 +27,16 @@ RegionId = Literal[
     "highlat_south",
 ]
 
+StatsMetric = Literal[
+    "mean",
+    "median",
+    "min",
+    "max",
+    "std",
+    "p90",
+    "p95",
+]
+
 
 class ToolError(BaseModel):
     """Structured error returned by a failed tool call."""
@@ -142,6 +152,69 @@ class SeriesProfileOutput(BaseModel):
     q25: float | None = None
     q75: float | None = None
     q90: float | None = None
+
+
+class ComputeSeriesStatsInput(BaseModel):
+    """Input schema for tec_compute_series_stats."""
+
+    series_id: str
+    metrics: list[StatsMetric] | None = None
+
+
+class ComputeSeriesStatsOutput(BaseModel):
+    """Output schema for tec_compute_series_stats."""
+
+    stats_id: str
+    series_id: str
+    region_id: RegionId | None = None
+    n_points: int
+    finite_points: int
+    metrics: dict[str, float | None]
+
+
+class CompareStatsInput(BaseModel):
+    """Input schema for tec_compare_stats."""
+
+    stats_ids: list[str] = Field(min_length=2)
+    reference_stats_id: str | None = None
+    metrics: list[StatsMetric] | None = None
+
+    @field_validator("stats_ids")
+    @classmethod
+    def validate_unique_stats_ids(cls, stats_ids: list[str]) -> list[str]:
+        if len(stats_ids) != len(set(stats_ids)):
+            raise ValueError("stats_ids must be unique")
+        return stats_ids
+
+
+class CompareStatsItem(BaseModel):
+    """One stats item included in a stats comparison."""
+
+    stats_id: str
+    series_id: str
+    region_id: RegionId | None = None
+    metrics: dict[str, float | None]
+
+
+class PairwiseStatsDeltaRecord(BaseModel):
+    """Pairwise metric deltas between two stats handles."""
+
+    left_stats_id: str
+    right_stats_id: str
+    left_region_id: RegionId | None = None
+    right_region_id: RegionId | None = None
+    delta: dict[str, float | None]
+
+
+class CompareStatsOutput(BaseModel):
+    """Output schema for tec_compare_stats."""
+
+    comparison_id: str
+    stats_ids: list[str]
+    reference_stats_id: str | None = None
+    regions: list[str]
+    items: list[CompareStatsItem]
+    pairwise_deltas: list[PairwiseStatsDeltaRecord]
 
 
 # ---------------------------------------------------------------------------

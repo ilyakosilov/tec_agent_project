@@ -93,7 +93,8 @@ def main() -> None:
             if result.task_type == "compare_regions":
                 comparison = result.result["comparison"]
                 print(f"regions: {result.result['region_ids']}")
-                print(f"n_stats: {len(comparison['stats'])}")
+                stats = comparison.get("items") or comparison.get("stats") or []
+                print(f"n_stats: {len(stats)}")
 
         print(f"trace calls: {result.trace['n_calls']}")
 
@@ -109,4 +110,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    

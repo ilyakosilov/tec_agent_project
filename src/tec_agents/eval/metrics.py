@@ -176,7 +176,7 @@ def compare_high_tec(
         )
 
         if agent_trace is not None:
-            metrics.update(_trace_metrics(agent_trace, task_type="high_tec"))
+            metrics.update(_trace_metrics(agent_trace, task_type="high_tec", task=task))
 
     except Exception as exc:
         errors.append(str(exc))
@@ -215,8 +215,8 @@ def compare_region_comparison(
         agent_comparison = _extract_comparison(agent_result)
         gold_comparison = gold_result["comparison"]
 
-        agent_stats = _stats_by_region(agent_comparison["stats"])
-        gold_stats = _stats_by_region(gold_comparison["stats"])
+        agent_stats = _comparison_stats_by_region(agent_result)
+        gold_stats = _comparison_stats_by_region(gold_result)
 
         agent_regions = set(agent_stats)
         gold_regions = set(gold_stats)
@@ -248,6 +248,20 @@ def compare_region_comparison(
         metrics["max_abs_error_max"] = max(max_errors) if max_errors else None
         metrics["p90_abs_error_max"] = max(p90_errors) if p90_errors else None
 
+        agent_pairwise = agent_comparison.get("pairwise_deltas", [])
+        gold_pairwise = gold_comparison.get("pairwise_deltas", [])
+
+        metrics["stats_tool_call_count"] = _stats_tool_call_count(agent_trace)
+        metrics["compare_stats_present"] = "items" in agent_comparison
+        metrics["compare_stats_region_count"] = len(
+            agent_comparison.get("regions", [])
+        )
+        metrics["pairwise_delta_count"] = len(agent_pairwise)
+        metrics["expected_pairwise_delta_count"] = len(gold_pairwise)
+        metrics["pairwise_delta_count_match"] = (
+            len(agent_pairwise) == len(gold_pairwise)
+        )
+
         metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
         metrics.update(
             _orchestration_metrics(
@@ -257,7 +271,13 @@ def compare_region_comparison(
         )
 
         if agent_trace is not None:
-            metrics.update(_trace_metrics(agent_trace, task_type="compare_regions"))
+            metrics.update(
+                _trace_metrics(
+                    agent_trace,
+                    task_type="compare_regions",
+                    task=task,
+                )
+            )
 
     except Exception as exc:
         errors.append(str(exc))
@@ -268,6 +288,7 @@ def compare_region_comparison(
         and metrics.get("mean_abs_error_max") == 0
         and metrics.get("max_abs_error_max") == 0
         and metrics.get("p90_abs_error_max") == 0
+        and metrics.get("pairwise_delta_count_match") is not False
     )
 
     return MetricResult(
@@ -358,7 +379,13 @@ def compare_stable_intervals(
         )
 
         if agent_trace is not None:
-            metrics.update(_trace_metrics(agent_trace, task_type="stable_intervals"))
+            metrics.update(
+                _trace_metrics(
+                    agent_trace,
+                    task_type="stable_intervals",
+                    task=task,
+                )
+            )
 
     except Exception as exc:
         errors.append(str(exc))
@@ -504,7 +531,7 @@ def compare_report(
         )
 
         if agent_trace is not None:
-            metrics.update(_trace_metrics(agent_trace, task_type="report"))
+            metrics.update(_trace_metrics(agent_trace, task_type="report", task=task))
 
     except Exception as exc:
         errors.append(str(exc))
@@ -732,13 +759,14 @@ def _trace_metrics(
     trace: dict[str, Any],
     *,
     task_type: str,
+    task: dict[str, Any] | None = None,
 ) -> dict[str, float | int | bool | str | list[str] | None]:
     """Compute tool-calling metrics from execution trace."""
 
     calls = trace.get("calls", [])
 
     tool_sequence = [str(call.get("tool_name")) for call in calls]
-    expected_sequence = _expected_tool_sequence(task_type)
+    expected_sequence = _expected_tool_sequence(task_type, task=task)
 
     tool_call_count = len(calls)
     tool_error_count = sum(1 for call in calls if call.get("status") != "ok")
@@ -788,8 +816,15 @@ def _trace_metrics(
     }
 
 
-def _expected_tool_sequence(task_type: str) -> list[str]:
+def _expected_tool_sequence(
+    task_type: str,
+    *,
+    task: dict[str, Any] | None = None,
+) -> list[str]:
     """Return expected tool sequence for supported task types."""
+
+    if task is not None and task.get("expected_tool_sequence"):
+        return [str(name) for name in task["expected_tool_sequence"]]
 
     if task_type == "high_tec":
         return [
@@ -799,7 +834,15 @@ def _expected_tool_sequence(task_type: str) -> list[str]:
         ]
 
     if task_type == "compare_regions":
-        return ["tec_compare_regions"]
+        region_count = 2
+        if task is not None:
+            region_count = len(task.get("region_ids") or []) or region_count
+
+        sequence: list[str] = []
+        for _ in range(region_count):
+            sequence.extend(["tec_get_timeseries", "tec_compute_series_stats"])
+        sequence.append("tec_compare_stats")
+        return sequence
 
     if task_type == "stable_intervals":
         return [
@@ -842,10 +885,68 @@ def _extract_comparison(result: dict[str, Any]) -> dict[str, Any]:
     if "comparison" in result:
         return result["comparison"]
 
+    if "items" in result:
+        return result
+
     if "stats" in result:
         return result
 
     raise KeyError("Could not find comparison result. Expected 'comparison' or 'stats'.")
+
+
+def _comparison_stats_by_region(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Extract region-keyed stats from primitive or legacy comparison results."""
+
+    comparison = _extract_comparison(result)
+
+    if "items" in comparison:
+        out: dict[str, dict[str, Any]] = {}
+        for item in comparison["items"]:
+            region_id = item.get("region_id")
+            if region_id is None:
+                continue
+            metrics = item.get("metrics") or {}
+            out[str(region_id)] = {
+                "region_id": region_id,
+                "stats_id": item.get("stats_id"),
+                "series_id": item.get("series_id"),
+                **metrics,
+            }
+        return out
+
+    if "stats" in comparison:
+        return _stats_by_region(comparison["stats"])
+
+    if "stats" in result and isinstance(result["stats"], list):
+        # Primitive agent/gold wrapper shape: {"stats": [...], "comparison": {...}}.
+        out = {}
+        for item in result["stats"]:
+            region_id = item.get("region_id")
+            if region_id is None:
+                continue
+            metrics = item.get("metrics") or {}
+            out[str(region_id)] = {
+                "region_id": region_id,
+                "stats_id": item.get("stats_id"),
+                "series_id": item.get("series_id"),
+                **metrics,
+            }
+        return out
+
+    raise KeyError("Could not find comparison statistics")
+
+
+def _stats_tool_call_count(trace: dict[str, Any] | None) -> int | None:
+    """Count primitive stats tool calls in an execution trace."""
+
+    if trace is None:
+        return None
+
+    return sum(
+        1
+        for call in trace.get("calls", [])
+        if call.get("tool_name") == "tec_compute_series_stats"
+    )
 
 
 def _extract_stable_payload(result: dict[str, Any]) -> dict[str, Any]:

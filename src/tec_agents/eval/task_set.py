@@ -79,6 +79,16 @@ def validate_tasks(tasks: list[EvalTask]) -> None:
         validate_task(task)
 
 
+def primitive_compare_tool_sequence(region_count: int) -> tuple[str, ...]:
+    """Return expected primitive compare tool sequence for N regions."""
+
+    sequence: list[str] = []
+    for _ in range(region_count):
+        sequence.extend(["tec_get_timeseries", "tec_compute_series_stats"])
+    sequence.append("tec_compare_stats")
+    return tuple(sequence)
+
+
 def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
     """
     Build a small task set for local smoke tests.
@@ -98,6 +108,12 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
             start="2024-03-01",
             end="2024-04-01",
             q=0.9,
+            expected_tool_sequence=(
+                "tec_get_timeseries",
+                "tec_compute_high_threshold",
+                "tec_detect_high_intervals",
+            ),
+            expected_worker="high_tec_worker",
             description="Smoke high-TEC task for the synthetic Europe series.",
         ),
         EvalTask(
@@ -110,6 +126,12 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
             start="2024-03-01",
             end="2024-04-01",
             q=0.9,
+            expected_tool_sequence=(
+                "tec_get_timeseries",
+                "tec_compute_high_threshold",
+                "tec_detect_high_intervals",
+            ),
+            expected_worker="high_tec_worker",
             description="Smoke high-TEC task for the synthetic northern high-latitude series.",
         ),
         EvalTask(
@@ -125,6 +147,11 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
             start="2024-03-01",
             end="2024-04-01",
             q=0.9,
+            params={
+                "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
+            },
+            expected_tool_sequence=primitive_compare_tool_sequence(2),
+            expected_worker="compare_worker",
             description="Smoke comparison task for two synthetic regions.",
         ),
     ]
@@ -212,7 +239,10 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
             start="2024-03-01",
             end="2024-04-01",
             q=0.9,
-            expected_tool_sequence=("tec_compare_regions",),
+            params={
+                "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
+            },
+            expected_tool_sequence=primitive_compare_tool_sequence(2),
             expected_worker="compare_worker",
             description="Regional TEC comparison between Europe and northern high latitudes.",
         ),
@@ -233,7 +263,10 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
             start="2024-03-01",
             end="2024-04-01",
             q=0.9,
-            expected_tool_sequence=("tec_compare_regions",),
+            params={
+                "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
+            },
+            expected_tool_sequence=primitive_compare_tool_sequence(3),
             expected_worker="compare_worker",
             description="Comparison across three equatorial sectors.",
         ),

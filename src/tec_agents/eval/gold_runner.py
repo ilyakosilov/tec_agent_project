@@ -163,23 +163,55 @@ class GoldRunner:
         }
 
     def _run_compare_regions(self, task: EvalTask) -> dict[str, Any]:
-        """Compute reference result for a region-comparison task."""
+        """Compute reference result for a region-comparison task via primitives."""
 
         if len(task.region_ids) < 2:
             raise ValueError(
                 f"Task {task.task_id!r} requires at least two region_ids"
             )
 
+        metrics = _compare_metrics_from_task(task)
+        series_results: list[dict[str, Any]] = []
+        stats_results: list[dict[str, Any]] = []
+        stats_ids: list[str] = []
+
+        step = 1
+        for region_id in task.region_ids:
+            ts_result = self.executor.call(
+                "tec_get_timeseries",
+                {
+                    "dataset_ref": task.dataset_ref,
+                    "region_id": region_id,
+                    "start": task.start,
+                    "end": task.end,
+                },
+                agent_name="gold_runner",
+                step=step,
+            )
+            series_results.append(ts_result)
+            step += 1
+
+            stats_result = self.executor.call(
+                "tec_compute_series_stats",
+                {
+                    "series_id": ts_result["series_id"],
+                    "metrics": metrics,
+                },
+                agent_name="gold_runner",
+                step=step,
+            )
+            stats_results.append(stats_result)
+            stats_ids.append(stats_result["stats_id"])
+            step += 1
+
         compare_result = self.executor.call(
-            "tec_compare_regions",
+            "tec_compare_stats",
             {
-                "dataset_ref": task.dataset_ref,
-                "region_ids": list(task.region_ids),
-                "start": task.start,
-                "end": task.end,
+                "stats_ids": stats_ids,
+                "metrics": metrics,
             },
             agent_name="gold_runner",
-            step=1,
+            step=step,
         )
 
         return {
@@ -187,8 +219,11 @@ class GoldRunner:
             "task_type": task.task_type,
             "dataset_ref": task.dataset_ref,
             "region_ids": list(task.region_ids),
+            "regions": list(task.region_ids),
             "start": task.start,
             "end": task.end,
+            "series": series_results,
+            "stats": stats_results,
             "comparison": compare_result,
         }
 
@@ -303,3 +338,14 @@ def run_gold_many(tasks: list[EvalTask]) -> list[GoldResult]:
     """Convenience function for running several tasks with a fresh GoldRunner."""
 
     return GoldRunner().run_many(tasks)
+
+
+def _compare_metrics_from_task(task: EvalTask) -> list[str]:
+    """Return deterministic compare metrics from task params or defaults."""
+
+    params = task.params or {}
+    metrics = params.get("metrics")
+    if metrics:
+        return list(metrics)
+
+    return ["mean", "median", "min", "max", "std", "p90", "p95"]

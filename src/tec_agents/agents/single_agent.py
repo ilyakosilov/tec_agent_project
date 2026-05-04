@@ -67,6 +67,7 @@ class ParsedSingleAgentTask:
     q_delta: float = 0.60
     q_std: float = 0.60
     include: list[str] = field(default_factory=list)
+    metrics: list[str] = field(default_factory=list)
     raw_query: str = ""
 
 
@@ -164,6 +165,7 @@ class RuleBasedSingleAgent:
                     "q_delta": parsed.q_delta,
                     "q_std": parsed.q_std,
                     "include": parsed.include,
+                    "metrics": parsed.metrics,
                     "selected_worker": "single_agent",
                 },
             )
@@ -221,6 +223,7 @@ class RuleBasedSingleAgent:
             q_delta=0.60,
             q_std=0.60,
             include=self._extract_report_include(lower),
+            metrics=self._default_compare_metrics(),
             raw_query=query,
         )
 
@@ -276,24 +279,59 @@ class RuleBasedSingleAgent:
         }
 
     def _run_compare_regions(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
-        """Execute region comparison through MCP-like tools."""
+        """Execute region comparison through primitive MCP-like tools."""
 
         if len(parsed.region_ids) < 2:
             raise ValueError("Comparison task requires at least two region_ids")
 
+        timeseries_results: list[dict[str, Any]] = []
+        stats_results: list[dict[str, Any]] = []
+        stats_ids: list[str] = []
+
+        step = 1
+        for region_id in parsed.region_ids:
+            ts_result = self.client.call_tool_result(
+                "tec_get_timeseries",
+                {
+                    "dataset_ref": parsed.dataset_ref,
+                    "region_id": region_id,
+                    "start": parsed.start,
+                    "end": parsed.end,
+                },
+                agent_name=self.agent_name,
+                step=step,
+            )
+            timeseries_results.append(ts_result)
+            step += 1
+
+            stats_result = self.client.call_tool_result(
+                "tec_compute_series_stats",
+                {
+                    "series_id": ts_result["series_id"],
+                    "metrics": parsed.metrics,
+                },
+                agent_name=self.agent_name,
+                step=step,
+            )
+            stats_results.append(stats_result)
+            stats_ids.append(stats_result["stats_id"])
+            step += 1
+
         comparison_result = self.client.call_tool_result(
-            "tec_compare_regions",
+            "tec_compare_stats",
             {
-                "dataset_ref": parsed.dataset_ref,
-                "region_ids": parsed.region_ids,
-                "start": parsed.start,
-                "end": parsed.end,
+                "stats_ids": stats_ids,
+                "metrics": parsed.metrics,
             },
             agent_name=self.agent_name,
-            step=1,
+            step=step,
         )
 
-        return comparison_result
+        return {
+            "timeseries": timeseries_results,
+            "stats": stats_results,
+            "comparison": comparison_result,
+        }
 
     def _run_stable_intervals(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
         """Execute stable-interval detection through MCP-like tools."""
@@ -429,16 +467,18 @@ class RuleBasedSingleAgent:
             "",
         ]
 
-        stats = tool_results["stats"]
+        comparison = _extract_comparison_payload(tool_results)
+        stats = comparison["items"]
 
         for item in stats:
+            metrics = item.get("metrics", {})
             lines.append(
                 f"- {item['region_id']}: "
-                f"mean={_fmt_float(item.get('mean'))} TECU, "
-                f"median={_fmt_float(item.get('median'))} TECU, "
-                f"max={_fmt_float(item.get('max'))} TECU, "
-                f"std={_fmt_float(item.get('std'))} TECU, "
-                f"p90={_fmt_float(item.get('p90'))} TECU."
+                f"mean={_fmt_float(metrics.get('mean'))} TECU, "
+                f"median={_fmt_float(metrics.get('median'))} TECU, "
+                f"max={_fmt_float(metrics.get('max'))} TECU, "
+                f"std={_fmt_float(metrics.get('std'))} TECU, "
+                f"p90={_fmt_float(metrics.get('p90'))} TECU."
             )
 
         return "\n".join(lines)
@@ -606,6 +646,11 @@ class RuleBasedSingleAgent:
 
         return include
 
+    def _default_compare_metrics(self) -> list[str]:
+        """Return deterministic metrics used in compare-region primitive chains."""
+
+        return ["mean", "median", "min", "max", "std", "p90", "p95"]
+
 
 def _fmt_float(value: Any) -> str:
     """Format optional numeric value."""
@@ -613,3 +658,28 @@ def _fmt_float(value: Any) -> str:
     if value is None:
         return "n/a"
     return f"{float(value):.3f}"
+
+
+def _extract_comparison_payload(tool_results: dict[str, Any]) -> dict[str, Any]:
+    """Extract comparison payload from current or legacy result shapes."""
+
+    if "comparison" in tool_results:
+        return tool_results["comparison"]
+
+    if "items" in tool_results:
+        return tool_results
+
+    if "stats" in tool_results:
+        return {
+            "items": [
+                {
+                    "stats_id": item.get("stats_id", ""),
+                    "series_id": item.get("series_id", ""),
+                    "region_id": item.get("region_id"),
+                    "metrics": item,
+                }
+                for item in tool_results["stats"]
+            ]
+        }
+
+    raise KeyError("Could not find comparison payload")
