@@ -242,7 +242,8 @@ def build_tool_registry() -> ToolRegistry:
                 name="tec_build_report",
                 description=(
                     "Build a compact deterministic TEC report for one or more regions, "
-                    "including basic statistics and optionally high-TEC intervals."
+                    "including basic statistics, high-TEC intervals, and stable "
+                    "interval summaries as structured JSON."
                 ),
                 input_model=BuildReportInput,
                 output_model=BuildReportOutput,

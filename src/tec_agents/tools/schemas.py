@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from tec_agents.data.regions import list_region_ids
 
@@ -74,6 +74,7 @@ class StableIntervalRecord(BaseModel):
     std_value: float | None = None
     min_value: float | None = None
     max_value: float | None = None
+    max_delta: float | None = None
     max_abs_delta: float | None = None
     n_points: int
 
@@ -217,11 +218,17 @@ class ComputeStabilityThresholdsOutput(BaseModel):
 
     threshold_id: str
     series_id: str
+    method: Literal["quantile"]
     window_minutes: int
-    max_abs_delta: float
-    max_std: float
     q_delta: float
     q_std: float
+    max_delta_threshold: float
+    rolling_std_threshold: float
+    estimated_step_minutes: float | None = None
+    window_points: int
+    n_points: int
+    max_abs_delta: float
+    max_std: float
     n_windows_used: int
 
 
@@ -231,7 +238,7 @@ class DetectStableIntervalsInput(BaseModel):
     series_id: str
     threshold_id: str
     min_duration_minutes: float = Field(default=180.0, ge=0.0)
-    merge_gap_minutes: float = Field(default=0.0, ge=0.0)
+    merge_gap_minutes: float = Field(default=60.0, ge=0.0)
 
 
 class DetectStableIntervalsOutput(BaseModel):
@@ -248,10 +255,17 @@ class FindStableIntervalsDirectInput(BaseModel):
 
     series_id: str
     window_minutes: int = Field(default=180, ge=1)
-    max_abs_delta: float = Field(ge=0.0)
+    max_delta: float | None = Field(default=None, ge=0.0)
+    max_abs_delta: float | None = Field(default=None, ge=0.0)
     max_std: float = Field(ge=0.0)
     min_duration_minutes: float = Field(default=180.0, ge=0.0)
     merge_gap_minutes: float = Field(default=0.0, ge=0.0)
+
+    @model_validator(mode="after")
+    def validate_delta_threshold(self) -> "FindStableIntervalsDirectInput":
+        if self.max_delta is None and self.max_abs_delta is None:
+            raise ValueError("Either max_delta or max_abs_delta is required")
+        return self
 
 
 # Reuses DetectStableIntervalsOutput.
@@ -295,12 +309,27 @@ class BuildReportInput(BaseModel):
     """Input schema for tec_build_report."""
 
     dataset_ref: str = "default"
-    region_ids: list[RegionId] = Field(min_length=1)
+    regions: list[RegionId] | None = None
+    region_ids: list[RegionId] | None = None
     start: str
     end: str
-    include_high_tec: bool = True
-    include_stability: bool = False
+    freq: str | None = None
+    include: list[Literal["basic_stats", "high_tec", "stable_intervals"]] | None = None
+    include_high_tec: bool | None = True
+    include_stability: bool | None = None
     q_high: float = Field(default=0.9, ge=0.0, le=1.0)
+    window_minutes: int = Field(default=180, ge=1)
+    q_delta: float = Field(default=0.6, ge=0.0, le=1.0)
+    q_std: float = Field(default=0.6, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_regions(self) -> "BuildReportInput":
+        selected_regions = self.regions or self.region_ids or []
+        if not selected_regions:
+            raise ValueError("Build report task requires at least one region")
+        if len(selected_regions) != len(set(selected_regions)):
+            raise ValueError("Report regions must be unique")
+        return self
 
 
 class BuildReportOutput(BaseModel):
@@ -308,6 +337,7 @@ class BuildReportOutput(BaseModel):
 
     report_id: str
     dataset_ref: str
+    regions: list[RegionId]
     start: str
     end: str
     region_ids: list[RegionId]

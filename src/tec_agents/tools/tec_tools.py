@@ -90,6 +90,12 @@ def _duration_minutes(start: pd.Timestamp, end: pd.Timestamp) -> float:
     return float((end - start).total_seconds() / 60.0)
 
 
+def _format_timestamp(value: Any) -> str:
+    """Return a stable ISO-like timestamp string without timezone guessing."""
+
+    return pd.Timestamp(value).isoformat(sep=" ")
+
+
 def _estimate_step_minutes(index: pd.DatetimeIndex) -> float | None:
     """Estimate median sampling step in minutes."""
 
@@ -316,11 +322,13 @@ def tec_compute_stability_thresholds(
 
     max_std = float(finite_std.quantile(args.q_std))
     max_abs_delta = float(finite_delta.quantile(args.q_delta))
+    step_minutes = _estimate_step_minutes(numeric.index)
 
     threshold_id = _make_id(
         "stab",
         {
             "series_id": args.series_id,
+            "method": args.method,
             "window_minutes": args.window_minutes,
             "q_delta": args.q_delta,
             "q_std": args.q_std,
@@ -332,10 +340,14 @@ def tec_compute_stability_thresholds(
     store.thresholds[threshold_id] = {
         "kind": "stability",
         "series_id": args.series_id,
+        "method": args.method,
         "window_minutes": args.window_minutes,
         "window_points": window_points,
         "max_std": max_std,
         "max_abs_delta": max_abs_delta,
+        "rolling_std_threshold": max_std,
+        "max_delta_threshold": max_abs_delta,
+        "estimated_step_minutes": step_minutes,
         "q_delta": args.q_delta,
         "q_std": args.q_std,
     }
@@ -343,11 +355,17 @@ def tec_compute_stability_thresholds(
     return ComputeStabilityThresholdsOutput(
         threshold_id=threshold_id,
         series_id=args.series_id,
+        method=args.method,
         window_minutes=args.window_minutes,
-        max_abs_delta=max_abs_delta,
-        max_std=max_std,
         q_delta=args.q_delta,
         q_std=args.q_std,
+        max_delta_threshold=max_abs_delta,
+        rolling_std_threshold=max_std,
+        estimated_step_minutes=step_minutes,
+        window_points=window_points,
+        n_points=int(len(numeric)),
+        max_abs_delta=max_abs_delta,
+        max_std=max_std,
         n_windows_used=int(min(len(finite_std), len(finite_delta))),
     )
 
@@ -394,11 +412,16 @@ def tec_find_stable_intervals_direct(
 
     series = _get_series_or_raise(args.series_id, store)
     window_points = _window_points_from_minutes(series.index, args.window_minutes)
+    max_delta = (
+        float(args.max_abs_delta)
+        if args.max_abs_delta is not None
+        else float(args.max_delta)
+    )
 
     intervals = _detect_stable_intervals_core(
         series=series,
         window_points=window_points,
-        max_abs_delta=args.max_abs_delta,
+        max_abs_delta=max_delta,
         max_std=args.max_std,
         min_duration_minutes=args.min_duration_minutes,
         merge_gap_minutes=args.merge_gap_minutes,
@@ -409,7 +432,7 @@ def tec_find_stable_intervals_direct(
         {
             "series_id": args.series_id,
             "window_minutes": args.window_minutes,
-            "max_abs_delta": args.max_abs_delta,
+            "max_abs_delta": max_delta,
             "max_std": args.max_std,
         },
     )
@@ -419,8 +442,10 @@ def tec_find_stable_intervals_direct(
         "series_id": args.series_id,
         "window_minutes": args.window_minutes,
         "window_points": window_points,
-        "max_abs_delta": args.max_abs_delta,
+        "max_abs_delta": max_delta,
+        "max_delta_threshold": max_delta,
         "max_std": args.max_std,
+        "rolling_std_threshold": args.max_std,
         "direct": True,
     }
 
@@ -465,29 +490,37 @@ def tec_build_report(
     args: BuildReportInput,
     store: ToolStore,
 ) -> BuildReportOutput:
-    """Build a compact deterministic report for one or more regions."""
+    """Build a structured deterministic report for one or more regions."""
 
     sections: dict[str, Any] = {}
+    region_ids = _report_region_ids(args)
+    include = _report_include_sections(args)
 
-    compare_args = CompareRegionsInput(
-        dataset_ref=args.dataset_ref,
-        region_ids=args.region_ids,
-        start=args.start,
-        end=args.end,
-    )
-    comparison = tec_compare_regions(compare_args, store)
-    sections["basic_stats"] = [item.model_dump() for item in comparison.stats]
+    if "basic_stats" in include:
+        compare_args = CompareRegionsInput(
+            dataset_ref=args.dataset_ref,
+            region_ids=region_ids,
+            start=args.start,
+            end=args.end,
+            freq=args.freq,
+        )
+        comparison = tec_compare_regions(compare_args, store)
+        sections["basic_stats"] = {
+            item.region_id: item.model_dump()
+            for item in comparison.stats
+        }
 
-    if args.include_high_tec:
+    if "high_tec" in include:
         high_sections: dict[str, Any] = {}
 
-        for region_id in args.region_ids:
+        for region_id in region_ids:
             ts_result = tec_get_timeseries(
                 GetTimeseriesInput(
                     dataset_ref=args.dataset_ref,
                     region_id=region_id,
                     start=args.start,
                     end=args.end,
+                    freq=args.freq,
                 ),
                 store,
             )
@@ -507,44 +540,150 @@ def tec_build_report(
                 store,
             )
 
+            interval_records = [item.model_dump() for item in intervals.intervals]
+            top_intervals = sorted(
+                interval_records,
+                key=lambda item: (
+                    item.get("peak_value") is not None,
+                    float(item.get("peak_value") or float("-inf")),
+                ),
+                reverse=True,
+            )[:5]
+            peak_values = [
+                float(item["peak_value"])
+                for item in interval_records
+                if item.get("peak_value") is not None
+            ]
+
             high_sections[region_id] = {
                 "series_id": ts_result.series_id,
                 "threshold_id": threshold.threshold_id,
+                "threshold": threshold.value,
                 "threshold_value": threshold.value,
+                "q": threshold.q,
                 "n_intervals": intervals.n_intervals,
-                "top_intervals": [
-                    item.model_dump()
-                    for item in intervals.intervals[:5]
-                ],
+                "global_peak_value": max(peak_values) if peak_values else None,
+                "top_intervals": top_intervals,
             }
 
         sections["high_tec"] = high_sections
+
+    if "stable_intervals" in include:
+        stable_sections: dict[str, Any] = {}
+
+        for region_id in region_ids:
+            ts_result = tec_get_timeseries(
+                GetTimeseriesInput(
+                    dataset_ref=args.dataset_ref,
+                    region_id=region_id,
+                    start=args.start,
+                    end=args.end,
+                    freq=args.freq,
+                ),
+                store,
+            )
+            thresholds = tec_compute_stability_thresholds(
+                ComputeStabilityThresholdsInput(
+                    series_id=ts_result.series_id,
+                    window_minutes=args.window_minutes,
+                    method="quantile",
+                    q_delta=args.q_delta,
+                    q_std=args.q_std,
+                ),
+                store,
+            )
+            intervals = tec_detect_stable_intervals(
+                DetectStableIntervalsInput(
+                    series_id=ts_result.series_id,
+                    threshold_id=thresholds.threshold_id,
+                    min_duration_minutes=args.window_minutes,
+                    merge_gap_minutes=60,
+                ),
+                store,
+            )
+
+            interval_records = [item.model_dump() for item in intervals.intervals]
+            top_intervals = sorted(
+                interval_records,
+                key=lambda item: (
+                    float(item.get("duration_minutes") or 0.0),
+                    item.get("start") or "",
+                ),
+                reverse=True,
+            )[:5]
+
+            stable_sections[region_id] = {
+                "series_id": ts_result.series_id,
+                "threshold_id": thresholds.threshold_id,
+                "window_minutes": thresholds.window_minutes,
+                "q_delta": thresholds.q_delta,
+                "q_std": thresholds.q_std,
+                "max_delta_threshold": thresholds.max_delta_threshold,
+                "rolling_std_threshold": thresholds.rolling_std_threshold,
+                "estimated_step_minutes": thresholds.estimated_step_minutes,
+                "window_points": thresholds.window_points,
+                "n_intervals": intervals.n_intervals,
+                "top_intervals": top_intervals,
+            }
+
+        sections["stable_intervals"] = stable_sections
 
     report_id = _make_id(
         "report",
         {
             "dataset_ref": args.dataset_ref,
-            "region_ids": args.region_ids,
+            "regions": region_ids,
             "start": args.start,
             "end": args.end,
-            "include_high_tec": args.include_high_tec,
-            "include_stability": args.include_stability,
+            "freq": args.freq,
+            "include": include,
             "q_high": args.q_high,
+            "window_minutes": args.window_minutes,
+            "q_delta": args.q_delta,
+            "q_std": args.q_std,
         },
     )
 
     output = BuildReportOutput(
         report_id=report_id,
         dataset_ref=args.dataset_ref,
+        regions=region_ids,  # type: ignore[arg-type]
         start=args.start,
         end=args.end,
-        region_ids=args.region_ids,
+        region_ids=region_ids,  # type: ignore[arg-type]
         sections=sections,
     )
 
     store.reports[report_id] = output.model_dump()
 
     return output
+
+
+def _report_region_ids(args: BuildReportInput) -> list[str]:
+    """Return report regions from the current or backward-compatible input field."""
+
+    return list(args.regions or args.region_ids or [])
+
+
+def _report_include_sections(args: BuildReportInput) -> list[str]:
+    """Return normalized report section names."""
+
+    if args.include is not None:
+        return list(dict.fromkeys(args.include))
+
+    include = ["basic_stats"]
+
+    if args.include_high_tec is not False:
+        include.append("high_tec")
+
+    include_stability = args.include_stability
+    if include_stability is None:
+        include_stability = True
+
+    if include_stability:
+        include.append("stable_intervals")
+
+    return include
 
 
 def _get_series_or_raise(series_id: str, store: ToolStore) -> pd.Series:
@@ -681,14 +820,14 @@ def _build_high_interval_record(
         n_points = 0
     else:
         peak_idx = finite.idxmax()
-        peak_time = str(peak_idx)
+        peak_time = _format_timestamp(peak_idx)
         peak_value = _safe_float(finite.loc[peak_idx])
         mean_value = _safe_float(finite.mean())
         n_points = int(len(finite))
 
     return IntervalRecord(
-        start=str(start),
-        end=str(end),
+        start=_format_timestamp(start),
+        end=_format_timestamp(end),
         duration_minutes=_duration_minutes(start, end),
         peak_time=peak_time,
         peak_value=peak_value,
@@ -783,8 +922,8 @@ def _build_stable_interval_record(
 
     if finite.empty:
         return StableIntervalRecord(
-            start=str(start),
-            end=str(end),
+            start=_format_timestamp(start),
+            end=_format_timestamp(end),
             duration_minutes=_duration_minutes(start, end),
             n_points=0,
         )
@@ -792,13 +931,14 @@ def _build_stable_interval_record(
     max_abs_delta = _safe_float(finite.diff().abs().max())
 
     return StableIntervalRecord(
-        start=str(start),
-        end=str(end),
+        start=_format_timestamp(start),
+        end=_format_timestamp(end),
         duration_minutes=_duration_minutes(start, end),
         mean_value=_safe_float(finite.mean()),
         std_value=_safe_float(finite.std()),
         min_value=_safe_float(finite.min()),
         max_value=_safe_float(finite.max()),
+        max_delta=max_abs_delta,
         max_abs_delta=max_abs_delta,
         n_points=int(len(finite)),
     )

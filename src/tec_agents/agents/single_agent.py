@@ -7,6 +7,8 @@ that uses the same MCP-like client and the same TEC tools as future LLM agents.
 Supported scenarios:
 - high TEC interval detection for one region and one month;
 - TEC statistics comparison for two or more regions and one month.
+- stable/low-variability TEC interval detection;
+- structured TEC reports for one or more regions.
 """
 
 from __future__ import annotations
@@ -57,9 +59,14 @@ class ParsedSingleAgentTask:
     dataset_ref: str = "default"
     region_id: str | None = "midlat_europe"
     region_ids: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
     start: str = ""
     end: str = ""
     q: float = 0.9
+    window_minutes: int = 180
+    q_delta: float = 0.60
+    q_std: float = 0.60
+    include: list[str] = field(default_factory=list)
     raw_query: str = ""
 
 
@@ -126,10 +133,19 @@ class RuleBasedSingleAgent:
             tool_results = self._run_compare_regions(parsed)
             answer = self._format_compare_regions_answer(parsed, tool_results)
 
+        elif parsed.task_type == "stable_intervals":
+            tool_results = self._run_stable_intervals(parsed)
+            answer = self._format_stable_intervals_answer(parsed, tool_results)
+
+        elif parsed.task_type == "report":
+            tool_results = self._run_report(parsed)
+            answer = self._format_report_answer(parsed, tool_results)
+
         else:
             raise ValueError(
                 f"Unsupported task_type={parsed.task_type!r}. "
-                "This baseline currently supports high_tec and compare_regions."
+                "This baseline currently supports high_tec, compare_regions, "
+                "stable_intervals and report."
             )
 
         orchestration_steps = [
@@ -140,9 +156,14 @@ class RuleBasedSingleAgent:
                     "task_type": parsed.task_type,
                     "region_id": parsed.region_id,
                     "region_ids": parsed.region_ids,
+                    "regions": parsed.regions,
                     "start": parsed.start,
                     "end": parsed.end,
                     "q": parsed.q,
+                    "window_minutes": parsed.window_minutes,
+                    "q_delta": parsed.q_delta,
+                    "q_std": parsed.q_std,
+                    "include": parsed.include,
                     "selected_worker": "single_agent",
                 },
             )
@@ -177,6 +198,12 @@ class RuleBasedSingleAgent:
                 )
             region_id = None
 
+        elif task_type == "report":
+            region_ids = self._extract_region_ids(lower)
+            if not region_ids:
+                region_ids = ["midlat_europe"]
+            region_id = None
+
         else:
             region_id = self._extract_region_id(lower)
             region_ids = [region_id]
@@ -186,9 +213,14 @@ class RuleBasedSingleAgent:
             dataset_ref=self.dataset_ref,
             region_id=region_id,
             region_ids=region_ids,
+            regions=region_ids,
             start=start,
             end=end,
             q=q,
+            window_minutes=180,
+            q_delta=0.60,
+            q_std=0.60,
+            include=self._extract_report_include(lower),
             raw_query=query,
         )
 
@@ -263,6 +295,76 @@ class RuleBasedSingleAgent:
 
         return comparison_result
 
+    def _run_stable_intervals(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
+        """Execute stable-interval detection through MCP-like tools."""
+
+        if parsed.region_id is None:
+            raise ValueError("Stable-interval task requires region_id")
+
+        ts_result = self.client.call_tool_result(
+            "tec_get_timeseries",
+            {
+                "dataset_ref": parsed.dataset_ref,
+                "region_id": parsed.region_id,
+                "start": parsed.start,
+                "end": parsed.end,
+            },
+            agent_name=self.agent_name,
+            step=1,
+        )
+
+        series_id = ts_result["series_id"]
+
+        thresholds_result = self.client.call_tool_result(
+            "tec_compute_stability_thresholds",
+            {
+                "series_id": series_id,
+                "window_minutes": parsed.window_minutes,
+                "method": "quantile",
+                "q_delta": parsed.q_delta,
+                "q_std": parsed.q_std,
+            },
+            agent_name=self.agent_name,
+            step=2,
+        )
+
+        intervals_result = self.client.call_tool_result(
+            "tec_detect_stable_intervals",
+            {
+                "series_id": series_id,
+                "threshold_id": thresholds_result["threshold_id"],
+                "min_duration_minutes": parsed.window_minutes,
+                "merge_gap_minutes": 60,
+            },
+            agent_name=self.agent_name,
+            step=3,
+        )
+
+        return {
+            "timeseries": ts_result,
+            "thresholds": thresholds_result,
+            "intervals": intervals_result,
+        }
+
+    def _run_report(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
+        """Execute structured report generation through one MCP-like tool call."""
+
+        if not parsed.region_ids:
+            raise ValueError("Report task requires at least one region")
+
+        return self.client.call_tool_result(
+            "tec_build_report",
+            {
+                "dataset_ref": parsed.dataset_ref,
+                "regions": parsed.region_ids,
+                "start": parsed.start,
+                "end": parsed.end,
+                "include": parsed.include,
+            },
+            agent_name=self.agent_name,
+            step=1,
+        )
+
     def _format_high_tec_answer(
         self,
         parsed: ParsedSingleAgentTask,
@@ -304,7 +406,7 @@ class RuleBasedSingleAgent:
             mean_text = f"{mean_value:.3f} TECU" if mean_value is not None else "n/a"
 
             lines.append(
-                f"{i}. {item['start']} → {item['end']}; "
+                f"{i}. {item['start']} -> {item['end']}; "
                 f"duration={item['duration_minutes']:.1f} min; "
                 f"peak={peak_text}; "
                 f"mean={mean_text}."
@@ -341,8 +443,64 @@ class RuleBasedSingleAgent:
 
         return "\n".join(lines)
 
+    def _format_stable_intervals_answer(
+        self,
+        parsed: ParsedSingleAgentTask,
+        tool_results: dict[str, Any],
+    ) -> str:
+        """Create a compact human-readable answer for stable intervals."""
+
+        thresholds = tool_results["thresholds"]
+        intervals = tool_results["intervals"]
+
+        return (
+            f"Stable TEC intervals for {parsed.region_id} from {parsed.start} "
+            f"to {parsed.end}: detected {intervals['n_intervals']} intervals "
+            f"using window={thresholds['window_minutes']} min, "
+            f"max_delta={thresholds['max_delta_threshold']:.3f}, "
+            f"rolling_std={thresholds['rolling_std_threshold']:.3f}."
+        )
+
+    def _format_report_answer(
+        self,
+        parsed: ParsedSingleAgentTask,
+        tool_results: dict[str, Any],
+    ) -> str:
+        """Create a compact human-readable answer for structured report tasks."""
+
+        sections = sorted(tool_results.get("sections", {}))
+        return (
+            f"Built TEC report {tool_results['report_id']} for "
+            f"{', '.join(parsed.region_ids)} from {parsed.start} to {parsed.end}. "
+            f"Sections: {', '.join(sections)}."
+        )
+
     def _extract_task_type(self, lower_query: str) -> str:
         """Extract supported task type."""
+
+        report_markers = [
+            "report",
+            "summary",
+            "summarize",
+            "summarise",
+            "build report",
+            "create summary",
+        ]
+
+        if any(marker in lower_query for marker in report_markers):
+            return "report"
+
+        stable_markers = [
+            "stable",
+            "low variability",
+            "low-variability",
+            "quiet tec",
+            "quiet interval",
+            "quiet period",
+        ]
+
+        if any(marker in lower_query for marker in stable_markers):
+            return "stable_intervals"
 
         compare_markers = [
             "compare",
@@ -437,6 +595,16 @@ class RuleBasedSingleAgent:
                 return float(match.group(1))
 
         return 0.9
+
+    def _extract_report_include(self, lower_query: str) -> list[str]:
+        """Extract report sections or return the deterministic default."""
+
+        include = ["basic_stats", "high_tec", "stable_intervals"]
+
+        if "basic_stats" in lower_query or "basic stats" in lower_query:
+            return ["basic_stats"]
+
+        return include
 
 
 def _fmt_float(value: Any) -> str:

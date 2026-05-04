@@ -65,6 +65,10 @@ class GoldRunner:
                 result = self._run_high_tec(task)
             elif task.task_type == "compare_regions":
                 result = self._run_compare_regions(task)
+            elif task.task_type == "stable_intervals":
+                result = self._run_stable_intervals(task)
+            elif task.task_type == "report":
+                result = self._run_report(task)
             else:
                 raise ValueError(
                     f"GoldRunner does not support task_type={task.task_type!r} yet"
@@ -186,6 +190,106 @@ class GoldRunner:
             "start": task.start,
             "end": task.end,
             "comparison": compare_result,
+        }
+
+    def _run_stable_intervals(self, task: EvalTask) -> dict[str, Any]:
+        """Compute reference result for a stable-interval task."""
+
+        if task.region_id is None:
+            raise ValueError(f"Task {task.task_id!r} requires region_id")
+
+        params = task.params or {}
+        window_minutes = int(params.get("window_minutes", 180))
+        q_delta = float(params.get("q_delta", 0.60))
+        q_std = float(params.get("q_std", 0.60))
+
+        ts_result = self.executor.call(
+            "tec_get_timeseries",
+            {
+                "dataset_ref": task.dataset_ref,
+                "region_id": task.region_id,
+                "start": task.start,
+                "end": task.end,
+            },
+            agent_name="gold_runner",
+            step=1,
+        )
+
+        series_id = ts_result["series_id"]
+
+        thresholds_result = self.executor.call(
+            "tec_compute_stability_thresholds",
+            {
+                "series_id": series_id,
+                "window_minutes": window_minutes,
+                "method": "quantile",
+                "q_delta": q_delta,
+                "q_std": q_std,
+            },
+            agent_name="gold_runner",
+            step=2,
+        )
+
+        intervals_result = self.executor.call(
+            "tec_detect_stable_intervals",
+            {
+                "series_id": series_id,
+                "threshold_id": thresholds_result["threshold_id"],
+                "min_duration_minutes": window_minutes,
+                "merge_gap_minutes": 60,
+            },
+            agent_name="gold_runner",
+            step=3,
+        )
+
+        return {
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "dataset_ref": task.dataset_ref,
+            "region": task.region_id,
+            "region_id": task.region_id,
+            "start": task.start,
+            "end": task.end,
+            "series": ts_result,
+            "thresholds": thresholds_result,
+            "intervals": intervals_result.get("intervals", []),
+            "n_intervals": intervals_result["n_intervals"],
+            "interval_result": intervals_result,
+        }
+
+    def _run_report(self, task: EvalTask) -> dict[str, Any]:
+        """Compute reference result for a structured report task."""
+
+        if not task.region_ids:
+            raise ValueError(f"Task {task.task_id!r} requires region_ids")
+
+        params = task.params or {}
+        include = params.get(
+            "include",
+            ["basic_stats", "high_tec", "stable_intervals"],
+        )
+
+        report_result = self.executor.call(
+            "tec_build_report",
+            {
+                "dataset_ref": task.dataset_ref,
+                "regions": list(task.region_ids),
+                "start": task.start,
+                "end": task.end,
+                "include": include,
+            },
+            agent_name="gold_runner",
+            step=1,
+        )
+
+        return {
+            "task_id": task.task_id,
+            "task_type": task.task_type,
+            "dataset_ref": task.dataset_ref,
+            "regions": list(task.region_ids),
+            "start": task.start,
+            "end": task.end,
+            "report": report_result,
         }
 
 

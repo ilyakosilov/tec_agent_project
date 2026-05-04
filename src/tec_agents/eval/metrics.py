@@ -73,6 +73,28 @@ def compare_agent_to_gold(
             orchestration_steps=orchestration_steps,
         )
 
+    if task_type == "stable_intervals":
+        return compare_stable_intervals(
+            task_id=task_id,
+            agent_result=agent_result,
+            gold_result=gold_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+
+    if task_type == "report":
+        return compare_report(
+            task_id=task_id,
+            agent_result=agent_result,
+            gold_result=gold_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+
     return MetricResult(
         task_id=task_id,
         task_type=task_type,
@@ -257,6 +279,258 @@ def compare_region_comparison(
     )
 
 
+def compare_stable_intervals(
+    *,
+    task_id: str,
+    agent_result: dict[str, Any],
+    gold_result: dict[str, Any],
+    agent_trace: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+    parsed_task: dict[str, Any] | None = None,
+    orchestration_steps: list[dict[str, Any]] | None = None,
+) -> MetricResult:
+    """Compare stable/low-variability interval results."""
+
+    errors: list[str] = []
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+
+    try:
+        agent_stable = _extract_stable_payload(agent_result)
+        gold_stable = _extract_stable_payload(gold_result)
+
+        agent_intervals = agent_stable["intervals"]
+        gold_intervals = gold_stable["intervals"]
+
+        agent_n_intervals = int(agent_stable["n_intervals"])
+        gold_n_intervals = int(gold_stable["n_intervals"])
+
+        metrics["agent_n_stable_intervals"] = agent_n_intervals
+        metrics["gold_n_stable_intervals"] = gold_n_intervals
+        metrics["stable_interval_count_error"] = abs(
+            agent_n_intervals - gold_n_intervals
+        )
+        metrics["stable_interval_count_match"] = agent_n_intervals == gold_n_intervals
+
+        if not agent_intervals and not gold_intervals:
+            metrics["stable_top_interval_start_match"] = None
+            metrics["stable_top_interval_end_match"] = None
+            metrics["stable_duration_abs_error_top"] = None
+            metrics["stable_mean_abs_error_top"] = None
+            metrics["stable_std_abs_error_top"] = None
+        elif not agent_intervals or not gold_intervals:
+            metrics["stable_top_interval_start_match"] = False
+            metrics["stable_top_interval_end_match"] = False
+            metrics["stable_duration_abs_error_top"] = None
+            metrics["stable_mean_abs_error_top"] = None
+            metrics["stable_std_abs_error_top"] = None
+        else:
+            agent_top = agent_intervals[0]
+            gold_top = gold_intervals[0]
+
+            metrics["stable_top_interval_start_match"] = (
+                agent_top.get("start") == gold_top.get("start")
+            )
+            metrics["stable_top_interval_end_match"] = (
+                agent_top.get("end") == gold_top.get("end")
+            )
+            metrics["stable_duration_abs_error_top"] = _field_abs_error(
+                agent_top,
+                gold_top,
+                "duration_minutes",
+            )
+            metrics["stable_mean_abs_error_top"] = _field_abs_error(
+                agent_top,
+                gold_top,
+                "mean_value",
+            )
+            metrics["stable_std_abs_error_top"] = _field_abs_error(
+                agent_top,
+                gold_top,
+                "std_value",
+            )
+
+        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _orchestration_metrics(
+                orchestration_steps=orchestration_steps,
+                task_type="stable_intervals",
+            )
+        )
+
+        if agent_trace is not None:
+            metrics.update(_trace_metrics(agent_trace, task_type="stable_intervals"))
+
+    except Exception as exc:
+        errors.append(str(exc))
+
+    top_start = metrics.get("stable_top_interval_start_match")
+    top_end = metrics.get("stable_top_interval_end_match")
+
+    success = (
+        not errors
+        and metrics.get("stable_interval_count_error") == 0
+        and top_start is not False
+        and top_end is not False
+        and _zero_or_none(metrics.get("stable_duration_abs_error_top"))
+        and _zero_or_none(metrics.get("stable_mean_abs_error_top"))
+        and _zero_or_none(metrics.get("stable_std_abs_error_top"))
+    )
+
+    return MetricResult(
+        task_id=task_id,
+        task_type="stable_intervals",
+        success=bool(success),
+        metrics=metrics,
+        errors=errors,
+    )
+
+
+def compare_report(
+    *,
+    task_id: str,
+    agent_result: dict[str, Any],
+    gold_result: dict[str, Any],
+    agent_trace: dict[str, Any] | None = None,
+    task: dict[str, Any] | None = None,
+    parsed_task: dict[str, Any] | None = None,
+    orchestration_steps: list[dict[str, Any]] | None = None,
+) -> MetricResult:
+    """Compare structured deterministic TEC reports."""
+
+    errors: list[str] = []
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+
+    try:
+        agent_report = _extract_report_payload(agent_result)
+        gold_report = _extract_report_payload(gold_result)
+
+        metrics["report_present"] = bool(agent_report)
+
+        agent_regions = set(agent_report.get("regions") or agent_report.get("region_ids") or [])
+        gold_regions = set(gold_report.get("regions") or gold_report.get("region_ids") or [])
+        shared_regions = sorted(agent_regions.intersection(gold_regions))
+
+        metrics["report_region_set_match"] = agent_regions == gold_regions
+        metrics["report_region_count_agent"] = len(agent_regions)
+        metrics["report_region_count_gold"] = len(gold_regions)
+
+        agent_sections = agent_report.get("sections") or {}
+        gold_sections = gold_report.get("sections") or {}
+        required_sections = {"basic_stats", "high_tec", "stable_intervals"}
+
+        metrics["report_required_sections_present"] = required_sections.issubset(
+            set(agent_sections)
+        )
+        metrics["report_basic_stats_present"] = "basic_stats" in agent_sections
+        metrics["report_high_tec_present"] = "high_tec" in agent_sections
+        metrics["report_stable_intervals_present"] = "stable_intervals" in agent_sections
+
+        basic_mean_errors: list[float] = []
+        basic_max_errors: list[float] = []
+        basic_p90_errors: list[float] = []
+
+        agent_basic = _section_by_region(agent_sections.get("basic_stats"))
+        gold_basic = _section_by_region(gold_sections.get("basic_stats"))
+
+        for region_id in shared_regions:
+            if region_id not in agent_basic or region_id not in gold_basic:
+                continue
+            basic_mean_errors.append(
+                abs(_as_float(agent_basic[region_id]["mean"]) - _as_float(gold_basic[region_id]["mean"]))
+            )
+            basic_max_errors.append(
+                abs(_as_float(agent_basic[region_id]["max"]) - _as_float(gold_basic[region_id]["max"]))
+            )
+            basic_p90_errors.append(
+                abs(_as_float(agent_basic[region_id]["p90"]) - _as_float(gold_basic[region_id]["p90"]))
+            )
+
+        metrics["report_mean_abs_error_avg"] = _avg(basic_mean_errors)
+        metrics["report_max_abs_error_avg"] = _avg(basic_max_errors)
+        metrics["report_p90_abs_error_avg"] = _avg(basic_p90_errors)
+
+        agent_high = _section_by_region(agent_sections.get("high_tec"))
+        gold_high = _section_by_region(gold_sections.get("high_tec"))
+        high_threshold_errors: list[float] = []
+        high_count_errors: list[float] = []
+
+        for region_id in shared_regions:
+            if region_id not in agent_high or region_id not in gold_high:
+                continue
+            high_threshold_errors.append(
+                abs(
+                    _as_float(_threshold_value(agent_high[region_id]))
+                    - _as_float(_threshold_value(gold_high[region_id]))
+                )
+            )
+            high_count_errors.append(
+                abs(
+                    float(agent_high[region_id].get("n_intervals", 0))
+                    - float(gold_high[region_id].get("n_intervals", 0))
+                )
+            )
+
+        metrics["report_high_tec_threshold_abs_error_avg"] = _avg(
+            high_threshold_errors
+        )
+        metrics["report_high_tec_interval_count_error_avg"] = _avg(
+            high_count_errors
+        )
+
+        agent_stable = _section_by_region(agent_sections.get("stable_intervals"))
+        gold_stable = _section_by_region(gold_sections.get("stable_intervals"))
+        stable_count_errors: list[float] = []
+
+        for region_id in shared_regions:
+            if region_id not in agent_stable or region_id not in gold_stable:
+                continue
+            stable_count_errors.append(
+                abs(
+                    float(agent_stable[region_id].get("n_intervals", 0))
+                    - float(gold_stable[region_id].get("n_intervals", 0))
+                )
+            )
+
+        metrics["report_stable_interval_count_error_avg"] = _avg(
+            stable_count_errors
+        )
+
+        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _orchestration_metrics(
+                orchestration_steps=orchestration_steps,
+                task_type="report",
+            )
+        )
+
+        if agent_trace is not None:
+            metrics.update(_trace_metrics(agent_trace, task_type="report"))
+
+    except Exception as exc:
+        errors.append(str(exc))
+
+    success = (
+        not errors
+        and metrics.get("report_present") is True
+        and metrics.get("report_region_set_match") is True
+        and metrics.get("report_required_sections_present") is True
+        and _zero_or_none(metrics.get("report_mean_abs_error_avg"))
+        and _zero_or_none(metrics.get("report_max_abs_error_avg"))
+        and _zero_or_none(metrics.get("report_p90_abs_error_avg"))
+        and _zero_or_none(metrics.get("report_high_tec_threshold_abs_error_avg"))
+        and _zero_or_none(metrics.get("report_high_tec_interval_count_error_avg"))
+        and _zero_or_none(metrics.get("report_stable_interval_count_error_avg"))
+    )
+
+    return MetricResult(
+        task_id=task_id,
+        task_type="report",
+        success=bool(success),
+        metrics=metrics,
+        errors=errors,
+    )
+
+
 def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
     """Summarize several metric results."""
 
@@ -400,7 +674,15 @@ def _selected_worker_from_steps(steps: list[dict[str, Any]]) -> str | None:
 
     for step in steps:
         node = str(step.get("node", ""))
-        if node in {"high_tec_agent", "compare_agent", "single_agent"}:
+        if node in {
+            "high_tec_worker",
+            "compare_worker",
+            "stable_worker",
+            "report_worker",
+            "high_tec_agent",
+            "compare_agent",
+            "single_agent",
+        }:
             return node
 
     return None
@@ -410,10 +692,16 @@ def _expected_worker_for_task_type(task_type: str) -> str | None:
     """Return expected worker for a task type."""
 
     if task_type == "high_tec":
-        return "high_tec_agent"
+        return "high_tec_worker"
 
     if task_type == "compare_regions":
-        return "compare_agent"
+        return "compare_worker"
+
+    if task_type == "stable_intervals":
+        return "stable_worker"
+
+    if task_type == "report":
+        return "report_worker"
 
     return None
 
@@ -513,6 +801,16 @@ def _expected_tool_sequence(task_type: str) -> list[str]:
     if task_type == "compare_regions":
         return ["tec_compare_regions"]
 
+    if task_type == "stable_intervals":
+        return [
+            "tec_get_timeseries",
+            "tec_compute_stability_thresholds",
+            "tec_detect_stable_intervals",
+        ]
+
+    if task_type == "report":
+        return ["tec_build_report"]
+
     return []
 
 
@@ -550,6 +848,79 @@ def _extract_comparison(result: dict[str, Any]) -> dict[str, Any]:
     raise KeyError("Could not find comparison result. Expected 'comparison' or 'stats'.")
 
 
+def _extract_stable_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Extract stable interval payload from agent, gold, or direct tool shape."""
+
+    if "interval_result" in result:
+        interval_result = result["interval_result"]
+        return {
+            "intervals": interval_result.get("intervals", []),
+            "n_intervals": int(interval_result.get("n_intervals", 0)),
+        }
+
+    if "intervals" in result and isinstance(result["intervals"], dict):
+        interval_result = result["intervals"]
+        return {
+            "intervals": interval_result.get("intervals", []),
+            "n_intervals": int(interval_result.get("n_intervals", 0)),
+        }
+
+    if "intervals" in result and isinstance(result["intervals"], list):
+        return {
+            "intervals": result["intervals"],
+            "n_intervals": int(result.get("n_intervals", len(result["intervals"]))),
+        }
+
+    raise KeyError("Could not find stable interval result")
+
+
+def _extract_report_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Extract structured report from gold or direct tool result shape."""
+
+    if "report" in result:
+        return result["report"]
+
+    if "sections" in result:
+        return result
+
+    raise KeyError("Could not find report payload")
+
+
+def _section_by_region(section: Any) -> dict[str, dict[str, Any]]:
+    """Normalize a report section into a region-keyed dictionary."""
+
+    if section is None:
+        return {}
+
+    if isinstance(section, dict):
+        return {
+            str(region_id): value
+            for region_id, value in section.items()
+            if isinstance(value, dict)
+        }
+
+    if isinstance(section, list):
+        out: dict[str, dict[str, Any]] = {}
+        for item in section:
+            if not isinstance(item, dict):
+                continue
+            region_id = item.get("region_id") or item.get("region")
+            if region_id is not None:
+                out[str(region_id)] = item
+        return out
+
+    return {}
+
+
+def _threshold_value(section: dict[str, Any]) -> Any:
+    """Return high-TEC threshold value from compatible report field names."""
+
+    if "threshold" in section:
+        return section["threshold"]
+
+    return section.get("threshold_value")
+
+
 def _stats_by_region(stats: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Index region stats by region_id."""
 
@@ -562,6 +933,19 @@ def _as_float(value: Any) -> float:
     if value is None:
         raise ValueError("Expected numeric value, got None")
     return float(value)
+
+
+def _field_abs_error(
+    agent_item: dict[str, Any],
+    gold_item: dict[str, Any],
+    field_name: str,
+) -> float | None:
+    """Return absolute error for an optional numeric field."""
+
+    if agent_item.get(field_name) is None or gold_item.get(field_name) is None:
+        return None
+
+    return abs(_as_float(agent_item[field_name]) - _as_float(gold_item[field_name]))
 
 
 def _avg(values: list[float]) -> float | None:
@@ -578,6 +962,18 @@ def _bool_rate(values: list[bool]) -> float | None:
     if not values:
         return None
     return sum(1 for value in values if value) / len(values)
+
+
+def _zero_or_none(value: Any) -> bool:
+    """Return True when a metric is exactly zero or intentionally absent."""
+
+    if value is None:
+        return True
+
+    try:
+        return float(value) == 0.0
+    except Exception:
+        return False
 
 
 def _max_peak(intervals: list[dict[str, Any]]) -> float | None:

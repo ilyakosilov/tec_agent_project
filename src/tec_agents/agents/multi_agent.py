@@ -17,6 +17,8 @@ The purpose is to compare orchestration structure:
 Supported scenarios:
 - high TEC interval detection;
 - TEC statistics comparison across regions.
+- stable/low-variability TEC interval detection;
+- structured TEC reports.
 """
 
 from __future__ import annotations
@@ -67,9 +69,14 @@ class ParsedMultiAgentTask:
     dataset_ref: str = "default"
     region_id: str | None = "midlat_europe"
     region_ids: list[str] = field(default_factory=list)
+    regions: list[str] = field(default_factory=list)
     start: str = ""
     end: str = ""
     q: float = 0.9
+    window_minutes: int = 180
+    q_delta: float = 0.60
+    q_std: float = 0.60
+    include: list[str] = field(default_factory=list)
     raw_query: str = ""
 
 
@@ -118,12 +125,14 @@ class RuleBasedOrchestrator:
                 dataset_ref=self.dataset_ref,
                 region_id=None,
                 region_ids=region_ids,
+                regions=region_ids,
                 start=start,
                 end=end,
                 q=q,
+                include=self._extract_report_include(lower),
                 raw_query=query,
             )
-            worker = "compare_agent"
+            worker = "compare_worker"
 
         elif task_type == "high_tec":
             region_id = self._extract_region_id(lower)
@@ -132,17 +141,58 @@ class RuleBasedOrchestrator:
                 dataset_ref=self.dataset_ref,
                 region_id=region_id,
                 region_ids=[region_id],
+                regions=[region_id],
                 start=start,
                 end=end,
                 q=q,
+                include=self._extract_report_include(lower),
                 raw_query=query,
             )
-            worker = "high_tec_agent"
+            worker = "high_tec_worker"
+
+        elif task_type == "stable_intervals":
+            region_id = self._extract_region_id(lower)
+            parsed = ParsedMultiAgentTask(
+                task_type=task_type,
+                dataset_ref=self.dataset_ref,
+                region_id=region_id,
+                region_ids=[region_id],
+                regions=[region_id],
+                start=start,
+                end=end,
+                q=q,
+                window_minutes=180,
+                q_delta=0.60,
+                q_std=0.60,
+                include=self._extract_report_include(lower),
+                raw_query=query,
+            )
+            worker = "stable_worker"
+
+        elif task_type == "report":
+            region_ids = self._extract_region_ids(lower)
+            if not region_ids:
+                region_ids = ["midlat_europe"]
+
+            parsed = ParsedMultiAgentTask(
+                task_type=task_type,
+                dataset_ref=self.dataset_ref,
+                region_id=None,
+                region_ids=region_ids,
+                regions=region_ids,
+                start=start,
+                end=end,
+                q=q,
+                include=self._extract_report_include(lower),
+                raw_query=query,
+            )
+            worker = "report_worker"
 
         else:
             raise ValueError(
                 f"Unsupported task_type={task_type!r}. "
-                "Multi-agent baseline supports high_tec and compare_regions."
+                "Multi-agent baseline supports high_tec, compare_regions, "
+                "stable_intervals and report."
             )
 
         step = MultiAgentStep(
@@ -153,9 +203,14 @@ class RuleBasedOrchestrator:
                 "worker": worker,
                 "region_id": parsed.region_id,
                 "region_ids": parsed.region_ids,
+                "regions": parsed.regions,
                 "start": parsed.start,
                 "end": parsed.end,
                 "q": parsed.q,
+                "window_minutes": parsed.window_minutes,
+                "q_delta": parsed.q_delta,
+                "q_std": parsed.q_std,
+                "include": parsed.include,
             },
         )
 
@@ -163,6 +218,30 @@ class RuleBasedOrchestrator:
 
     def _extract_task_type(self, lower_query: str) -> str:
         """Extract supported task type."""
+
+        report_markers = [
+            "report",
+            "summary",
+            "summarize",
+            "summarise",
+            "build report",
+            "create summary",
+        ]
+
+        if any(marker in lower_query for marker in report_markers):
+            return "report"
+
+        stable_markers = [
+            "stable",
+            "low variability",
+            "low-variability",
+            "quiet tec",
+            "quiet interval",
+            "quiet period",
+        ]
+
+        if any(marker in lower_query for marker in stable_markers):
+            return "stable_intervals"
 
         compare_markers = ["compare", "comparison", "сравни", "сравнение"]
 
@@ -253,11 +332,19 @@ class RuleBasedOrchestrator:
 
         return 0.9
 
+    def _extract_report_include(self, lower_query: str) -> list[str]:
+        """Extract report sections or return the deterministic default."""
+
+        if "basic_stats" in lower_query or "basic stats" in lower_query:
+            return ["basic_stats"]
+
+        return ["basic_stats", "high_tec", "stable_intervals"]
+
 
 class HighTecWorkerAgent:
     """Specialized worker for high-TEC detection."""
 
-    def __init__(self, client: LocalMCPClient, agent_name: str = "high_tec_agent") -> None:
+    def __init__(self, client: LocalMCPClient, agent_name: str = "high_tec_worker") -> None:
         self.client = client
         self.agent_name = agent_name
 
@@ -329,7 +416,7 @@ class HighTecWorkerAgent:
 class CompareWorkerAgent:
     """Specialized worker for regional TEC comparison."""
 
-    def __init__(self, client: LocalMCPClient, agent_name: str = "compare_agent") -> None:
+    def __init__(self, client: LocalMCPClient, agent_name: str = "compare_worker") -> None:
         self.client = client
         self.agent_name = agent_name
 
@@ -363,6 +450,117 @@ class CompareWorkerAgent:
         return comparison_result, step
 
 
+class StableWorkerAgent:
+    """Specialized worker for stable/low-variability TEC intervals."""
+
+    def __init__(self, client: LocalMCPClient, agent_name: str = "stable_worker") -> None:
+        self.client = client
+        self.agent_name = agent_name
+
+    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Run stable-interval tool sequence."""
+
+        if parsed.region_id is None:
+            raise ValueError("Stable-interval task requires region_id")
+
+        ts_result = self.client.call_tool_result(
+            "tec_get_timeseries",
+            {
+                "dataset_ref": parsed.dataset_ref,
+                "region_id": parsed.region_id,
+                "start": parsed.start,
+                "end": parsed.end,
+            },
+            agent_name=self.agent_name,
+            step=1,
+        )
+
+        series_id = ts_result["series_id"]
+
+        thresholds_result = self.client.call_tool_result(
+            "tec_compute_stability_thresholds",
+            {
+                "series_id": series_id,
+                "window_minutes": parsed.window_minutes,
+                "method": "quantile",
+                "q_delta": parsed.q_delta,
+                "q_std": parsed.q_std,
+            },
+            agent_name=self.agent_name,
+            step=2,
+        )
+
+        intervals_result = self.client.call_tool_result(
+            "tec_detect_stable_intervals",
+            {
+                "series_id": series_id,
+                "threshold_id": thresholds_result["threshold_id"],
+                "min_duration_minutes": parsed.window_minutes,
+                "merge_gap_minutes": 60,
+            },
+            agent_name=self.agent_name,
+            step=3,
+        )
+
+        tool_results = {
+            "timeseries": ts_result,
+            "thresholds": thresholds_result,
+            "intervals": intervals_result,
+        }
+
+        step = MultiAgentStep(
+            node=self.agent_name,
+            action="detect_stable_intervals",
+            details={
+                "region_id": parsed.region_id,
+                "series_id": series_id,
+                "threshold_id": thresholds_result["threshold_id"],
+                "n_intervals": intervals_result["n_intervals"],
+            },
+        )
+
+        return tool_results, step
+
+
+class ReportWorkerAgent:
+    """Specialized worker for structured TEC reports."""
+
+    def __init__(self, client: LocalMCPClient, agent_name: str = "report_worker") -> None:
+        self.client = client
+        self.agent_name = agent_name
+
+    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Run one structured report tool call."""
+
+        if not parsed.region_ids:
+            raise ValueError("Report task requires at least one region")
+
+        report_result = self.client.call_tool_result(
+            "tec_build_report",
+            {
+                "dataset_ref": parsed.dataset_ref,
+                "regions": parsed.region_ids,
+                "start": parsed.start,
+                "end": parsed.end,
+                "include": parsed.include,
+            },
+            agent_name=self.agent_name,
+            step=1,
+        )
+
+        step = MultiAgentStep(
+            node=self.agent_name,
+            action="build_report",
+            details={
+                "regions": parsed.region_ids,
+                "report_id": report_result["report_id"],
+                "sections": sorted(report_result.get("sections", {})),
+            },
+        )
+
+        return report_result, step
+
+
 class ReporterAgent:
     """Specialized reporter that formats final answers."""
 
@@ -380,6 +578,10 @@ class ReporterAgent:
             answer = self._format_high_tec_answer(parsed, tool_results)
         elif parsed.task_type == "compare_regions":
             answer = self._format_compare_regions_answer(parsed, tool_results)
+        elif parsed.task_type == "stable_intervals":
+            answer = self._format_stable_intervals_answer(parsed, tool_results)
+        elif parsed.task_type == "report":
+            answer = self._format_report_answer(parsed, tool_results)
         else:
             raise ValueError(f"Unsupported task type for reporter: {parsed.task_type!r}")
 
@@ -435,13 +637,45 @@ class ReporterAgent:
             mean_text = f"{mean_value:.3f} TECU" if mean_value is not None else "n/a"
 
             lines.append(
-                f"{i}. {item['start']} → {item['end']}; "
+                f"{i}. {item['start']} -> {item['end']}; "
                 f"duration={item['duration_minutes']:.1f} min; "
                 f"peak={peak_text}; "
                 f"mean={mean_text}."
             )
 
         return "\n".join(lines)
+
+    def _format_stable_intervals_answer(
+        self,
+        parsed: ParsedMultiAgentTask,
+        tool_results: dict[str, Any],
+    ) -> str:
+        """Create a compact answer for stable interval tasks."""
+
+        thresholds = tool_results["thresholds"]
+        intervals = tool_results["intervals"]
+
+        return (
+            f"Stable TEC intervals for {parsed.region_id} from {parsed.start} "
+            f"to {parsed.end}: detected {intervals['n_intervals']} intervals "
+            f"using window={thresholds['window_minutes']} min, "
+            f"max_delta={thresholds['max_delta_threshold']:.3f}, "
+            f"rolling_std={thresholds['rolling_std_threshold']:.3f}."
+        )
+
+    def _format_report_answer(
+        self,
+        parsed: ParsedMultiAgentTask,
+        tool_results: dict[str, Any],
+    ) -> str:
+        """Create a compact answer for structured report tasks."""
+
+        sections = sorted(tool_results.get("sections", {}))
+        return (
+            f"Built TEC report {tool_results['report_id']} for "
+            f"{', '.join(parsed.region_ids)} from {parsed.start} to {parsed.end}. "
+            f"Sections: {', '.join(sections)}."
+        )
 
     def _format_compare_regions_answer(
         self,
@@ -492,6 +726,8 @@ class RuleBasedMultiAgent:
         self.orchestrator = RuleBasedOrchestrator(dataset_ref=dataset_ref)
         self.high_tec_agent = HighTecWorkerAgent(client=client)
         self.compare_agent = CompareWorkerAgent(client=client)
+        self.stable_agent = StableWorkerAgent(client=client)
+        self.report_agent = ReportWorkerAgent(client=client)
         self.reporter_agent = ReporterAgent()
 
     def reset(self) -> None:
@@ -512,10 +748,14 @@ class RuleBasedMultiAgent:
         parsed, worker, route_step = self.orchestrator.parse_and_route(query)
         orchestration_steps.append(route_step)
 
-        if worker == "high_tec_agent":
+        if worker == "high_tec_worker":
             tool_results, worker_step = self.high_tec_agent.run(parsed)
-        elif worker == "compare_agent":
+        elif worker == "compare_worker":
             tool_results, worker_step = self.compare_agent.run(parsed)
+        elif worker == "stable_worker":
+            tool_results, worker_step = self.stable_agent.run(parsed)
+        elif worker == "report_worker":
+            tool_results, worker_step = self.report_agent.run(parsed)
         else:
             raise ValueError(f"Unknown worker selected by orchestrator: {worker!r}")
 
