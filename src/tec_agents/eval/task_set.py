@@ -80,12 +80,47 @@ def validate_tasks(tasks: list[EvalTask]) -> None:
 
 
 def primitive_compare_tool_sequence(region_count: int) -> tuple[str, ...]:
-    """Return expected primitive compare tool sequence for N regions."""
+    """Return grouped primitive compare tool sequence for N regions."""
 
     sequence: list[str] = []
-    for _ in range(region_count):
-        sequence.extend(["tec_get_timeseries", "tec_compute_series_stats"])
+    sequence.extend(["tec_get_timeseries"] * region_count)
+    sequence.extend(["tec_compute_series_stats"] * region_count)
     sequence.append("tec_compare_stats")
+    return tuple(sequence)
+
+
+def primitive_report_tool_sequence(
+    region_count: int,
+    include: list[str] | None = None,
+) -> tuple[str, ...]:
+    """Return primitive report tool sequence for N regions and sections."""
+
+    selected = include or ["basic_stats", "high_tec", "stable_intervals"]
+    sequence: list[str] = ["tec_get_timeseries"] * region_count
+
+    if "basic_stats" in selected:
+        sequence.extend(["tec_compute_series_stats"] * region_count)
+        if region_count >= 2:
+            sequence.append("tec_compare_stats")
+
+    if "high_tec" in selected:
+        for _ in range(region_count):
+            sequence.extend(
+                [
+                    "tec_compute_high_threshold",
+                    "tec_detect_high_intervals",
+                ]
+            )
+
+    if "stable_intervals" in selected:
+        for _ in range(region_count):
+            sequence.extend(
+                [
+                    "tec_compute_stability_thresholds",
+                    "tec_detect_stable_intervals",
+                ]
+            )
+
     return tuple(sequence)
 
 
@@ -113,7 +148,7 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
                 "tec_compute_high_threshold",
                 "tec_detect_high_intervals",
             ),
-            expected_worker="high_tec_worker",
+            expected_worker="role_based_workflow",
             description="Smoke high-TEC task for the synthetic Europe series.",
         ),
         EvalTask(
@@ -131,7 +166,7 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
                 "tec_compute_high_threshold",
                 "tec_detect_high_intervals",
             ),
-            expected_worker="high_tec_worker",
+            expected_worker="role_based_workflow",
             description="Smoke high-TEC task for the synthetic northern high-latitude series.",
         ),
         EvalTask(
@@ -151,7 +186,7 @@ def build_smoke_tasks(dataset_ref: str = "smoke") -> list[EvalTask]:
                 "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
             },
             expected_tool_sequence=primitive_compare_tool_sequence(2),
-            expected_worker="compare_worker",
+            expected_worker="role_based_workflow",
             description="Smoke comparison task for two synthetic regions.",
         ),
     ]
@@ -184,7 +219,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "tec_compute_high_threshold",
                 "tec_detect_high_intervals",
             ),
-            expected_worker="high_tec_worker",
+            expected_worker="role_based_workflow",
             description="High TEC intervals over European mid-latitudes.",
         ),
         EvalTask(
@@ -202,7 +237,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "tec_compute_high_threshold",
                 "tec_detect_high_intervals",
             ),
-            expected_worker="high_tec_worker",
+            expected_worker="role_based_workflow",
             description="High TEC intervals over northern high latitudes.",
         ),
         EvalTask(
@@ -223,7 +258,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "tec_compute_high_threshold",
                 "tec_detect_high_intervals",
             ),
-            expected_worker="high_tec_worker",
+            expected_worker="role_based_workflow",
             description="High TEC intervals over the equatorial Atlantic sector.",
         ),
         EvalTask(
@@ -243,7 +278,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
             },
             expected_tool_sequence=primitive_compare_tool_sequence(2),
-            expected_worker="compare_worker",
+            expected_worker="role_based_workflow",
             description="Regional TEC comparison between Europe and northern high latitudes.",
         ),
         EvalTask(
@@ -267,7 +302,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"],
             },
             expected_tool_sequence=primitive_compare_tool_sequence(3),
-            expected_worker="compare_worker",
+            expected_worker="role_based_workflow",
             description="Comparison across three equatorial sectors.",
         ),
         EvalTask(
@@ -289,7 +324,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "tec_compute_stability_thresholds",
                 "tec_detect_stable_intervals",
             ),
-            expected_worker="stable_worker",
+            expected_worker="role_based_workflow",
             description="Stable TEC intervals over European mid-latitudes.",
         ),
         EvalTask(
@@ -311,7 +346,7 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                 "tec_compute_stability_thresholds",
                 "tec_detect_stable_intervals",
             ),
-            expected_worker="stable_worker",
+            expected_worker="role_based_workflow",
             description="Low-variability TEC intervals over northern high latitudes.",
         ),
         EvalTask(
@@ -333,8 +368,8 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                     "stable_intervals",
                 ]
             },
-            expected_tool_sequence=("tec_build_report",),
-            expected_worker="report_worker",
+            expected_tool_sequence=primitive_report_tool_sequence(2),
+            expected_worker="role_based_workflow",
             description="Structured report for Europe and northern high latitudes.",
         ),
         EvalTask(
@@ -360,8 +395,8 @@ def build_default_research_tasks(dataset_ref: str = "default") -> list[EvalTask]
                     "stable_intervals",
                 ]
             },
-            expected_tool_sequence=("tec_build_report",),
-            expected_worker="report_worker",
+            expected_tool_sequence=primitive_report_tool_sequence(3),
+            expected_worker="role_based_workflow",
             description="Structured report for three equatorial sectors.",
         ),
     ]

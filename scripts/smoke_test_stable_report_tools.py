@@ -154,7 +154,11 @@ def main() -> None:
         "Build a TEC report for midlat_europe and highlat_north in March 2024"
     )
     assert report_single.parsed_task.task_type == "report"
-    assert report_single.trace["n_calls"] == 1
+    assert report_single.trace["n_calls"] == 13
+    assert all(
+        call["tool_name"] != "tec_build_report"
+        for call in report_single.trace["calls"]
+    )
 
     multi_agent = RuleBasedMultiAgent(client=client, dataset_ref="smoke")
     multi_agent.reset()
@@ -163,7 +167,13 @@ def main() -> None:
         "Find low variability TEC periods for highlat_north in March 2024"
     )
     assert stable_multi.parsed_task.task_type == "stable_intervals"
-    assert stable_multi.orchestration_steps[0].details["worker"] == "stable_worker"
+    assert [step.node for step in stable_multi.orchestration_steps] == [
+        "orchestrator",
+        "data_agent",
+        "math_agent",
+        "analysis_agent",
+        "report_agent",
+    ]
     assert stable_multi.trace["n_calls"] == 3
 
     multi_agent.reset()
@@ -172,8 +182,18 @@ def main() -> None:
         "and equatorial_pacific in March 2024"
     )
     assert report_multi.parsed_task.task_type == "report"
-    assert report_multi.orchestration_steps[0].details["worker"] == "report_worker"
-    assert report_multi.trace["n_calls"] == 1
+    assert [step.node for step in report_multi.orchestration_steps] == [
+        "orchestrator",
+        "data_agent",
+        "math_agent",
+        "analysis_agent",
+        "report_agent",
+    ]
+    assert report_multi.trace["n_calls"] == 19
+    assert all(
+        call["tool_name"] != "tec_build_report"
+        for call in report_multi.trace["calls"]
+    )
 
     print("Stable/report smoke test finished successfully.")
 

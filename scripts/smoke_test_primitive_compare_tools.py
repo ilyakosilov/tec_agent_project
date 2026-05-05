@@ -2,7 +2,7 @@
 Smoke test for primitive compare tools.
 
 This test verifies the agentic compare chain:
-get_timeseries -> compute_series_stats repeated per region -> compare_stats.
+all get_timeseries calls -> all compute_series_stats calls -> compare_stats.
 No LLM or raw data download is used.
 """
 
@@ -31,8 +31,8 @@ from tec_agents.tools.executor import build_default_executor
 
 EXPECTED_COMPARE_SEQUENCE = [
     "tec_get_timeseries",
-    "tec_compute_series_stats",
     "tec_get_timeseries",
+    "tec_compute_series_stats",
     "tec_compute_series_stats",
     "tec_compare_stats",
 ]

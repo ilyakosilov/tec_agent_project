@@ -8,6 +8,7 @@ gold result on the same synthetic task.
 from __future__ import annotations
 
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
@@ -21,11 +22,12 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
+from tec_agents.agents.multi_agent import RuleBasedMultiAgent
 from tec_agents.agents.single_agent import RuleBasedSingleAgent
 from tec_agents.data.datasets import register_dataset
 from tec_agents.eval.gold_runner import GoldRunner
 from tec_agents.eval.metrics import compare_agent_to_gold, summarize_metric_results
-from tec_agents.eval.task_set import build_smoke_tasks
+from tec_agents.eval.task_set import build_smoke_tasks, task_to_dict
 from tec_agents.mcp.client import LocalMCPClient
 from tec_agents.mcp.server import build_local_mcp_server
 
@@ -102,6 +104,36 @@ def main() -> None:
     assert metric_result.metrics["threshold_abs_error"] == 0
     assert metric_result.metrics["interval_count_error"] == 0
     assert metric_result.metrics["tool_call_count"] == 3
+
+    multi_server = build_local_mcp_server(run_id=f"multi_agent_{task.task_id}")
+    multi_client = LocalMCPClient(multi_server)
+    multi_agent = RuleBasedMultiAgent(client=multi_client, dataset_ref="smoke")
+    multi_output = multi_agent.run(task.query)
+
+    multi_metric = compare_agent_to_gold(
+        task_id=task.task_id,
+        task_type=task.task_type,
+        agent_result=multi_output.tool_results,
+        gold_result=gold.result,
+        agent_trace=multi_output.trace,
+        task=task_to_dict(task),
+        parsed_task=asdict(multi_output.parsed_task),
+        orchestration_steps=[
+            asdict(step)
+            for step in multi_output.orchestration_steps
+        ],
+    )
+
+    print("\nMulti-agent role metric result:")
+    print(multi_metric.to_dict())
+
+    assert multi_metric.success is True
+    assert multi_metric.metrics["role_agent_order_match"] is True
+    assert multi_metric.metrics["artifact_flow_valid"] is True
+    assert multi_metric.metrics["data_agent_called"] is True
+    assert multi_metric.metrics["math_agent_called"] is True
+    assert multi_metric.metrics["analysis_agent_called"] is True
+    assert multi_metric.metrics["report_agent_called"] is True
 
     print("\nMetrics smoke test finished successfully.")
 

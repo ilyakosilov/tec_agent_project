@@ -60,6 +60,8 @@ def print_summary_table(reports: list[dict[str, Any]]) -> None:
                 "avg_orch_steps": summary.get("avg_orchestration_step_count"),
                 "route_correct": summary.get("route_correct_rate"),
                 "tool_seq_match": summary.get("tool_sequence_match_rate"),
+                "role_order": summary.get("role_agent_order_match_rate"),
+                "artifact_flow": summary.get("artifact_flow_valid_rate"),
             }
         )
 
@@ -73,6 +75,8 @@ def print_summary_table(reports: list[dict[str, Any]]) -> None:
         "avg_orch_steps",
         "route_correct",
         "tool_seq_match",
+        "role_order",
+        "artifact_flow",
     ]
 
     print("\nArchitecture summary")
@@ -173,8 +177,8 @@ def print_interpretation(reports: list[dict[str, Any]]) -> None:
 
     print(
         "- In the rule-based baseline, multi-agent orchestration adds explicit "
-        "routing and reporting steps, but does not reduce the number of "
-        "deterministic tool calls."
+        "role stages for data, math, analysis, and reporting, but does not "
+        "reduce the number of deterministic tool calls."
     )
 
     print(

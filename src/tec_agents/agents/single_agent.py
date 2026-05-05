@@ -50,6 +50,8 @@ MONTHS: dict[str, int] = {
     "dec": 12,
 }
 
+DEFAULT_REPORT_INCLUDE = ["basic_stats", "high_tec", "stable_intervals"]
+
 
 @dataclass
 class ParsedSingleAgentTask:
@@ -304,6 +306,7 @@ class RuleBasedSingleAgent:
             timeseries_results.append(ts_result)
             step += 1
 
+        for ts_result in timeseries_results:
             stats_result = self.client.call_tool_result(
                 "tec_compute_series_stats",
                 {
@@ -385,23 +388,173 @@ class RuleBasedSingleAgent:
         }
 
     def _run_report(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
-        """Execute structured report generation through one MCP-like tool call."""
+        """Execute structured report generation through primitive tools."""
 
         if not parsed.region_ids:
             raise ValueError("Report task requires at least one region")
 
-        return self.client.call_tool_result(
-            "tec_build_report",
-            {
+        include = _report_include(parsed.include)
+        series_by_region: dict[str, dict[str, Any]] = {}
+        report_inputs: dict[str, Any] = {}
+        step = 1
+
+        for region_id in parsed.region_ids:
+            ts_result = self.client.call_tool_result(
+                "tec_get_timeseries",
+                {
+                    "dataset_ref": parsed.dataset_ref,
+                    "region_id": region_id,
+                    "start": parsed.start,
+                    "end": parsed.end,
+                },
+                agent_name=self.agent_name,
+                step=step,
+            )
+            step += 1
+            series_by_region[region_id] = {
+                "series_id": ts_result["series_id"],
+                "tool_result": ts_result,
+                "metadata": ts_result.get("metadata"),
+            }
+
+        if "basic_stats" in include:
+            by_region: dict[str, dict[str, Any]] = {}
+            stats_ids: list[str] = []
+
+            for region_id in parsed.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                stats_result = self.client.call_tool_result(
+                    "tec_compute_series_stats",
+                    {
+                        "series_id": series_id,
+                        "metrics": parsed.metrics,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "stats_id": stats_result["stats_id"],
+                    "series_id": series_id,
+                    "stats": stats_result,
+                    "metrics": stats_result.get("metrics", {}),
+                }
+                stats_ids.append(stats_result["stats_id"])
+
+            comparison = None
+            if len(stats_ids) >= 2:
+                comparison = self.client.call_tool_result(
+                    "tec_compare_stats",
+                    {
+                        "stats_ids": stats_ids,
+                        "metrics": parsed.metrics,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+            report_inputs["basic_stats"] = {
+                "by_region": by_region,
+                "comparison": comparison,
+            }
+
+        if "high_tec" in include:
+            by_region = {}
+
+            for region_id in parsed.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                threshold_result = self.client.call_tool_result(
+                    "tec_compute_high_threshold",
+                    {
+                        "series_id": series_id,
+                        "method": "quantile",
+                        "q": parsed.q,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.client.call_tool_result(
+                    "tec_detect_high_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": threshold_result["threshold_id"],
+                        "min_duration_minutes": 0,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "threshold": threshold_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["high_tec"] = {"by_region": by_region}
+
+        if "stable_intervals" in include:
+            by_region = {}
+
+            for region_id in parsed.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                thresholds_result = self.client.call_tool_result(
+                    "tec_compute_stability_thresholds",
+                    {
+                        "series_id": series_id,
+                        "window_minutes": parsed.window_minutes,
+                        "method": "quantile",
+                        "q_delta": parsed.q_delta,
+                        "q_std": parsed.q_std,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.client.call_tool_result(
+                    "tec_detect_stable_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": thresholds_result["threshold_id"],
+                        "min_duration_minutes": parsed.window_minutes,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "thresholds": thresholds_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["stable_intervals"] = {"by_region": by_region}
+
+        return {
+            "data": {
+                "series_by_region": series_by_region,
+                "regions": list(parsed.region_ids),
                 "dataset_ref": parsed.dataset_ref,
-                "regions": parsed.region_ids,
                 "start": parsed.start,
                 "end": parsed.end,
-                "include": parsed.include,
             },
-            agent_name=self.agent_name,
-            step=1,
-        )
+            "math": {
+                "report_inputs": report_inputs,
+            },
+            "analysis": {
+                "findings": [],
+                "summary": {
+                    "primary_region": parsed.region_ids[0],
+                    "n_regions": len(parsed.region_ids),
+                },
+            },
+        }
 
     def _format_high_tec_answer(
         self,
@@ -508,9 +661,14 @@ class RuleBasedSingleAgent:
     ) -> str:
         """Create a compact human-readable answer for structured report tasks."""
 
-        sections = sorted(tool_results.get("sections", {}))
+        if "sections" in tool_results:
+            sections = sorted(tool_results.get("sections", {}))
+        else:
+            report_inputs = (tool_results.get("math") or {}).get("report_inputs") or {}
+            sections = sorted(report_inputs)
+
         return (
-            f"Built TEC report {tool_results['report_id']} for "
+            "Built TEC report from primitive artifacts for "
             f"{', '.join(parsed.region_ids)} from {parsed.start} to {parsed.end}. "
             f"Sections: {', '.join(sections)}."
         )
@@ -545,8 +703,8 @@ class RuleBasedSingleAgent:
         compare_markers = [
             "compare",
             "comparison",
-            "сравни",
-            "сравнение",
+            "\u0441\u0440\u0430\u0432\u043d\u0438",
+            "\u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435",
         ]
 
         if any(marker in lower_query for marker in compare_markers):
@@ -683,3 +841,11 @@ def _extract_comparison_payload(tool_results: dict[str, Any]) -> dict[str, Any]:
         }
 
     raise KeyError("Could not find comparison payload")
+
+
+def _report_include(include: list[str] | None) -> list[str]:
+    """Return normalized report include sections."""
+
+    selected = include or DEFAULT_REPORT_INCLUDE
+    allowed = set(DEFAULT_REPORT_INCLUDE)
+    return [section for section in dict.fromkeys(selected) if section in allowed]

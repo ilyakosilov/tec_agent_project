@@ -120,11 +120,14 @@ def compare_high_tec(
     metrics: dict[str, float | int | bool | str | list[str] | None] = {}
 
     try:
-        agent_threshold = agent_result["threshold"]
-        agent_intervals = agent_result["intervals"]
+        agent_high = _extract_high_tec_payload(agent_result)
+        gold_high = _extract_high_tec_payload(gold_result)
 
-        gold_threshold = gold_result["threshold"]
-        gold_intervals = gold_result["intervals"]
+        agent_threshold = agent_high["threshold"]
+        agent_intervals = agent_high["intervals"]
+
+        gold_threshold = gold_high["threshold"]
+        gold_intervals = gold_high["intervals"]
 
         agent_threshold_value = _as_float(agent_threshold["value"])
         gold_threshold_value = _as_float(gold_threshold["value"])
@@ -172,6 +175,8 @@ def compare_high_tec(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
                 task_type="high_tec",
+                agent_result=agent_result,
+                parsed_task=parsed_task,
             )
         )
 
@@ -267,6 +272,8 @@ def compare_region_comparison(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
                 task_type="compare_regions",
+                agent_result=agent_result,
+                parsed_task=parsed_task,
             )
         )
 
@@ -375,6 +382,8 @@ def compare_stable_intervals(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
                 task_type="stable_intervals",
+                agent_result=agent_result,
+                parsed_task=parsed_task,
             )
         )
 
@@ -527,6 +536,8 @@ def compare_report(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
                 task_type="report",
+                agent_result=agent_result,
+                parsed_task=parsed_task,
             )
         )
 
@@ -595,6 +606,24 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
         if isinstance(result.metrics.get("tool_sequence_match"), bool)
     ]
 
+    role_agent_order_match_values = [
+        result.metrics.get("role_agent_order_match")
+        for result in results
+        if isinstance(result.metrics.get("role_agent_order_match"), bool)
+    ]
+
+    artifact_flow_valid_values = [
+        result.metrics.get("artifact_flow_valid")
+        for result in results
+        if isinstance(result.metrics.get("artifact_flow_valid"), bool)
+    ]
+
+    required_role_agents_called_values = [
+        result.metrics.get("required_role_agents_called")
+        for result in results
+        if isinstance(result.metrics.get("required_role_agents_called"), bool)
+    ]
+
     return {
         "n_tasks": n,
         "n_success": n_success,
@@ -607,6 +636,11 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
         ),
         "route_correct_rate": _bool_rate(route_correct_values),
         "tool_sequence_match_rate": _bool_rate(tool_sequence_match_values),
+        "role_agent_order_match_rate": _bool_rate(role_agent_order_match_values),
+        "artifact_flow_valid_rate": _bool_rate(artifact_flow_valid_values),
+        "required_role_agents_called_rate": _bool_rate(
+            required_role_agents_called_values
+        ),
     }
 
 
@@ -654,24 +688,70 @@ def _orchestration_metrics(
     *,
     orchestration_steps: list[dict[str, Any]] | None,
     task_type: str,
+    agent_result: dict[str, Any] | None = None,
+    parsed_task: dict[str, Any] | None = None,
 ) -> dict[str, float | int | bool | str | list[str] | None]:
     """Compute architecture-level orchestration metrics."""
 
     steps = orchestration_steps or []
     nodes = [str(step.get("node", "")) for step in steps]
+    expected_role_order = [
+        "orchestrator",
+        "data_agent",
+        "math_agent",
+        "analysis_agent",
+        "report_agent",
+    ]
 
     orchestrator_count = sum(1 for node in nodes if "orchestrator" in node)
-    reporter_count = sum(1 for node in nodes if "reporter" in node)
+    reporter_count = sum(
+        1
+        for node in nodes
+        if node in {"report_agent", "reporter_agent"} or "reporter" in node
+    )
     worker_count = sum(
         1
         for node in nodes
         if node not in {"", "rule_based_single_agent"}
         and "orchestrator" not in node
+        and node not in {"report_agent", "reporter_agent"}
         and "reporter" not in node
     )
 
     selected_worker = _selected_worker_from_steps(steps)
-    expected_worker = _expected_worker_for_task_type(task_type)
+    role_agent_order_match = nodes == expected_role_order
+    role_workflow_seen = any(
+        node in {"data_agent", "math_agent", "analysis_agent", "report_agent"}
+        for node in nodes
+    )
+    expected_worker = (
+        "role_based_workflow"
+        if role_workflow_seen
+        else _expected_worker_for_task_type(task_type)
+    )
+
+    data_agent_called = "data_agent" in nodes
+    math_agent_called = "math_agent" in nodes
+    analysis_agent_called = "analysis_agent" in nodes
+    report_agent_called = "report_agent" in nodes
+    required_role_agents_called = (
+        data_agent_called
+        and math_agent_called
+        and analysis_agent_called
+        and report_agent_called
+    )
+
+    data_artifact_available = _data_artifact_available(agent_result)
+    math_artifact_available = _math_artifact_available(agent_result)
+    analysis_artifact_available = _analysis_artifact_available(agent_result)
+    report_grounded_in_artifacts = (
+        data_artifact_available and math_artifact_available
+    )
+    artifact_flow_valid = _artifact_flow_valid(
+        agent_result=agent_result,
+        parsed_task=parsed_task,
+        nodes=nodes,
+    )
 
     return {
         "orchestration_step_count": len(steps),
@@ -685,8 +765,23 @@ def _orchestration_metrics(
             selected_worker=selected_worker,
             expected_worker=expected_worker,
             task_type=task_type,
+            parsed_task=parsed_task,
+            role_agent_order_match=role_agent_order_match,
         ),
         "orchestration_nodes": nodes,
+        "data_agent_called": data_agent_called,
+        "math_agent_called": math_agent_called,
+        "analysis_agent_called": analysis_agent_called,
+        "report_agent_called": report_agent_called,
+        "required_role_agents_called": required_role_agents_called,
+        "role_agent_order": nodes,
+        "expected_role_agent_order": expected_role_order,
+        "role_agent_order_match": role_agent_order_match,
+        "artifact_flow_valid": artifact_flow_valid,
+        "data_artifact_available": data_artifact_available,
+        "math_artifact_available": math_artifact_available,
+        "analysis_artifact_available": analysis_artifact_available,
+        "report_grounded_in_artifacts": report_grounded_in_artifacts,
     }
 
 
@@ -708,8 +803,14 @@ def _selected_worker_from_steps(steps: list[dict[str, Any]]) -> str | None:
             "report_worker",
             "high_tec_agent",
             "compare_agent",
+            "data_agent",
+            "math_agent",
+            "analysis_agent",
+            "report_agent",
             "single_agent",
         }:
+            if node in {"data_agent", "math_agent", "analysis_agent", "report_agent"}:
+                return "role_based_workflow"
             return node
 
     return None
@@ -738,6 +839,8 @@ def _route_correct(
     selected_worker: str | None,
     expected_worker: str | None,
     task_type: str,
+    parsed_task: dict[str, Any] | None = None,
+    role_agent_order_match: bool | None = None,
 ) -> bool | None:
     """
     Evaluate routing correctness.
@@ -749,10 +852,93 @@ def _route_correct(
     if selected_worker == "single_agent":
         return True
 
+    if selected_worker == "role_based_workflow":
+        parsed_task_type = parsed_task.get("task_type") if parsed_task else task_type
+        return parsed_task_type == task_type and role_agent_order_match is True
+
     if expected_worker is None or selected_worker is None:
         return None
 
     return selected_worker == expected_worker
+
+
+def _data_artifact_available(agent_result: dict[str, Any] | None) -> bool:
+    """Return True if role data artifacts are present."""
+
+    data = (agent_result or {}).get("data") or {}
+    series_by_region = data.get("series_by_region")
+    return isinstance(series_by_region, dict) and bool(series_by_region)
+
+
+def _math_artifact_available(agent_result: dict[str, Any] | None) -> bool:
+    """Return True if role math artifacts are present."""
+
+    math = (agent_result or {}).get("math")
+    return isinstance(math, dict) and bool(math)
+
+
+def _analysis_artifact_available(agent_result: dict[str, Any] | None) -> bool:
+    """Return True if role analysis artifacts are present."""
+
+    analysis = (agent_result or {}).get("analysis") or {}
+    return isinstance(analysis.get("findings"), list)
+
+
+def _artifact_flow_valid(
+    *,
+    agent_result: dict[str, Any] | None,
+    parsed_task: dict[str, Any] | None,
+    nodes: list[str],
+) -> bool:
+    """Validate the role artifact flow at a structural level."""
+
+    expected_order = [
+        "orchestrator",
+        "data_agent",
+        "math_agent",
+        "analysis_agent",
+        "report_agent",
+    ]
+    if nodes != expected_order:
+        return False
+
+    result = agent_result or {}
+    data = result.get("data") or {}
+    math = result.get("math") or {}
+    analysis = result.get("analysis") or {}
+
+    series_by_region = data.get("series_by_region")
+    if not isinstance(series_by_region, dict) or not series_by_region:
+        return False
+
+    expected_regions = _parsed_regions(parsed_task)
+    if expected_regions and set(series_by_region) != set(expected_regions):
+        return False
+
+    if not isinstance(math, dict) or not math:
+        return False
+
+    if not isinstance(analysis, dict) or "findings" not in analysis:
+        return False
+
+    return True
+
+
+def _parsed_regions(parsed_task: dict[str, Any] | None) -> list[str]:
+    """Return parsed regions from a serialized parsed task."""
+
+    if not parsed_task:
+        return []
+
+    region_ids = parsed_task.get("region_ids") or []
+    if region_ids:
+        return [str(region_id) for region_id in region_ids]
+
+    region_id = parsed_task.get("region_id")
+    if region_id:
+        return [str(region_id)]
+
+    return []
 
 
 def _trace_metrics(
@@ -839,8 +1025,8 @@ def _expected_tool_sequence(
             region_count = len(task.get("region_ids") or []) or region_count
 
         sequence: list[str] = []
-        for _ in range(region_count):
-            sequence.extend(["tec_get_timeseries", "tec_compute_series_stats"])
+        sequence.extend(["tec_get_timeseries"] * region_count)
+        sequence.extend(["tec_compute_series_stats"] * region_count)
         sequence.append("tec_compare_stats")
         return sequence
 
@@ -852,7 +1038,39 @@ def _expected_tool_sequence(
         ]
 
     if task_type == "report":
-        return ["tec_build_report"]
+        region_count = 1
+        include = ["basic_stats", "high_tec", "stable_intervals"]
+        if task is not None:
+            region_count = len(task.get("region_ids") or []) or region_count
+            params = task.get("params") or {}
+            include = list(params.get("include") or include)
+
+        sequence = ["tec_get_timeseries"] * region_count
+
+        if "basic_stats" in include:
+            sequence.extend(["tec_compute_series_stats"] * region_count)
+            if region_count >= 2:
+                sequence.append("tec_compare_stats")
+
+        if "high_tec" in include:
+            for _ in range(region_count):
+                sequence.extend(
+                    [
+                        "tec_compute_high_threshold",
+                        "tec_detect_high_intervals",
+                    ]
+                )
+
+        if "stable_intervals" in include:
+            for _ in range(region_count):
+                sequence.extend(
+                    [
+                        "tec_compute_stability_thresholds",
+                        "tec_detect_stable_intervals",
+                    ]
+                )
+
+        return sequence
 
     return []
 
@@ -882,6 +1100,15 @@ def _extract_comparison(result: dict[str, Any]) -> dict[str, Any]:
       {"stats": [...]}
     """
 
+    math = result.get("math") or {}
+    if "comparison" in math:
+        return math["comparison"]
+
+    report_inputs = math.get("report_inputs") or {}
+    basic_stats = report_inputs.get("basic_stats") or {}
+    if basic_stats.get("comparison") is not None:
+        return basic_stats["comparison"]
+
     if "comparison" in result:
         return result["comparison"]
 
@@ -896,6 +1123,37 @@ def _extract_comparison(result: dict[str, Any]) -> dict[str, Any]:
 
 def _comparison_stats_by_region(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Extract region-keyed stats from primitive or legacy comparison results."""
+
+    math = result.get("math") or {}
+
+    if isinstance(math.get("stats_by_region"), dict):
+        out: dict[str, dict[str, Any]] = {}
+        for region_id, item in math["stats_by_region"].items():
+            stats = item.get("stats") or item
+            metrics = item.get("metrics") or stats.get("metrics") or {}
+            out[str(region_id)] = {
+                "region_id": stats.get("region_id") or region_id,
+                "stats_id": item.get("stats_id") or stats.get("stats_id"),
+                "series_id": item.get("series_id") or stats.get("series_id"),
+                **metrics,
+            }
+        return out
+
+    report_inputs = math.get("report_inputs") or {}
+    basic_stats = report_inputs.get("basic_stats") or {}
+    by_region = basic_stats.get("by_region")
+    if isinstance(by_region, dict):
+        out = {}
+        for region_id, item in by_region.items():
+            stats = item.get("stats") or item
+            metrics = item.get("metrics") or stats.get("metrics") or {}
+            out[str(region_id)] = {
+                "region_id": stats.get("region_id") or region_id,
+                "stats_id": item.get("stats_id") or stats.get("stats_id"),
+                "series_id": item.get("series_id") or stats.get("series_id"),
+                **metrics,
+            }
+        return out
 
     comparison = _extract_comparison(result)
 
@@ -949,8 +1207,51 @@ def _stats_tool_call_count(trace: dict[str, Any] | None) -> int | None:
     )
 
 
+def _extract_high_tec_payload(result: dict[str, Any]) -> dict[str, Any]:
+    """Extract high-TEC payload from flat or role-based result shape."""
+
+    if "threshold" in result and "intervals" in result:
+        return {
+            "threshold": result["threshold"],
+            "intervals": result["intervals"],
+        }
+
+    math = result.get("math") or {}
+    high_by_region = math.get("high_tec")
+
+    if not high_by_region:
+        report_inputs = math.get("report_inputs") or {}
+        high = report_inputs.get("high_tec") or {}
+        high_by_region = high.get("by_region")
+
+    if isinstance(high_by_region, dict) and high_by_region:
+        first_item = next(iter(high_by_region.values()))
+        return {
+            "threshold": first_item["threshold"],
+            "intervals": first_item["intervals"],
+        }
+
+    raise KeyError("Could not find high-TEC result")
+
+
 def _extract_stable_payload(result: dict[str, Any]) -> dict[str, Any]:
     """Extract stable interval payload from agent, gold, or direct tool shape."""
+
+    math = result.get("math") or {}
+    stable_by_region = math.get("stable_intervals")
+
+    if not stable_by_region:
+        report_inputs = math.get("report_inputs") or {}
+        stable = report_inputs.get("stable_intervals") or {}
+        stable_by_region = stable.get("by_region")
+
+    if isinstance(stable_by_region, dict) and stable_by_region:
+        first_item = next(iter(stable_by_region.values()))
+        interval_result = first_item["intervals"]
+        return {
+            "intervals": interval_result.get("intervals", []),
+            "n_intervals": int(interval_result.get("n_intervals", 0)),
+        }
 
     if "interval_result" in result:
         interval_result = result["interval_result"]
@@ -976,7 +1277,7 @@ def _extract_stable_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _extract_report_payload(result: dict[str, Any]) -> dict[str, Any]:
-    """Extract structured report from gold or direct tool result shape."""
+    """Extract structured report from legacy or role-based result shape."""
 
     if "report" in result:
         return result["report"]
@@ -984,7 +1285,132 @@ def _extract_report_payload(result: dict[str, Any]) -> dict[str, Any]:
     if "sections" in result:
         return result
 
+    math = result.get("math") or {}
+    report_inputs = math.get("report_inputs")
+    if isinstance(report_inputs, dict):
+        data = result.get("data") or {}
+        regions = (
+            result.get("regions")
+            or result.get("region_ids")
+            or data.get("regions")
+            or list((data.get("series_by_region") or {}).keys())
+        )
+        sections: dict[str, Any] = {}
+
+        basic = report_inputs.get("basic_stats") or {}
+        if basic:
+            sections["basic_stats"] = _report_basic_stats_section(basic)
+
+        high = report_inputs.get("high_tec") or {}
+        if high:
+            sections["high_tec"] = _report_high_tec_section(high)
+
+        stable = report_inputs.get("stable_intervals") or {}
+        if stable:
+            sections["stable_intervals"] = _report_stable_section(stable)
+
+        return {
+            "regions": list(regions),
+            "region_ids": list(regions),
+            "sections": sections,
+        }
+
     raise KeyError("Could not find report payload")
+
+
+def _report_basic_stats_section(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize primitive report basic stats into report-section shape."""
+
+    by_region = section.get("by_region") or {}
+    out: dict[str, dict[str, Any]] = {}
+
+    for region_id, item in by_region.items():
+        stats = item.get("stats") or item
+        metrics = item.get("metrics") or stats.get("metrics") or {}
+        out[str(region_id)] = {
+            "region_id": stats.get("region_id") or region_id,
+            "stats_id": item.get("stats_id") or stats.get("stats_id"),
+            "series_id": item.get("series_id") or stats.get("series_id"),
+            "n_points": stats.get("n_points"),
+            "finite_points": stats.get("finite_points"),
+            **metrics,
+        }
+
+    return out
+
+
+def _report_high_tec_section(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize primitive report high-TEC artifacts into report-section shape."""
+
+    by_region = section.get("by_region") or {}
+    out: dict[str, dict[str, Any]] = {}
+
+    for region_id, item in by_region.items():
+        threshold = item.get("threshold") or {}
+        intervals = item.get("intervals") or {}
+        interval_records = intervals.get("intervals") or []
+        peak_values = [
+            float(record["peak_value"])
+            for record in interval_records
+            if record.get("peak_value") is not None
+        ]
+        top_intervals = sorted(
+            interval_records,
+            key=lambda record: (
+                record.get("peak_value") is not None,
+                float(record.get("peak_value") or float("-inf")),
+            ),
+            reverse=True,
+        )[:5]
+        out[str(region_id)] = {
+            "region_id": region_id,
+            "series_id": intervals.get("series_id") or threshold.get("series_id"),
+            "threshold_id": threshold.get("threshold_id"),
+            "threshold": threshold.get("value"),
+            "threshold_value": threshold.get("value"),
+            "q": threshold.get("q"),
+            "n_intervals": intervals.get("n_intervals", 0),
+            "global_peak_value": max(peak_values) if peak_values else None,
+            "top_intervals": top_intervals,
+        }
+
+    return out
+
+
+def _report_stable_section(section: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Normalize primitive report stable artifacts into report-section shape."""
+
+    by_region = section.get("by_region") or {}
+    out: dict[str, dict[str, Any]] = {}
+
+    for region_id, item in by_region.items():
+        thresholds = item.get("thresholds") or {}
+        intervals = item.get("intervals") or {}
+        interval_records = intervals.get("intervals") or []
+        top_intervals = sorted(
+            interval_records,
+            key=lambda record: (
+                float(record.get("duration_minutes") or 0.0),
+                record.get("start") or "",
+            ),
+            reverse=True,
+        )[:5]
+        out[str(region_id)] = {
+            "region_id": region_id,
+            "series_id": intervals.get("series_id") or thresholds.get("series_id"),
+            "threshold_id": thresholds.get("threshold_id"),
+            "window_minutes": thresholds.get("window_minutes"),
+            "q_delta": thresholds.get("q_delta"),
+            "q_std": thresholds.get("q_std"),
+            "max_delta_threshold": thresholds.get("max_delta_threshold"),
+            "rolling_std_threshold": thresholds.get("rolling_std_threshold"),
+            "estimated_step_minutes": thresholds.get("estimated_step_minutes"),
+            "window_points": thresholds.get("window_points"),
+            "n_intervals": intervals.get("n_intervals", 0),
+            "top_intervals": top_intervals,
+        }
+
+    return out
 
 
 def _section_by_region(section: Any) -> dict[str, dict[str, Any]]:

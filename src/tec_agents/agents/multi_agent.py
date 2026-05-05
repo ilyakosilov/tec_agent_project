@@ -1,24 +1,18 @@
 """
-Rule-based multi-agent baseline.
+Rule-based role-oriented multi-agent baseline.
 
-This module implements a deterministic multi-agent baseline without an LLM.
-It uses the same MCP-like client and TEC tools as the single-agent baseline.
+This module implements a deterministic multi-agent workflow without an LLM.
+It uses the same MCP-like client and TEC tools as the single-agent baseline,
+but separates responsibilities by role instead of by task type:
 
-The purpose is to compare orchestration structure:
+- orchestrator: parse the request and build the workflow plan;
+- data_agent: load and validate data artifacts;
+- math_agent: compute deterministic numerical artifacts;
+- analysis_agent: convert artifacts into structured findings;
+- report_agent: format the final answer from artifacts and findings.
 
-- single_agent_rule_based:
-    one agent parses the task and calls all tools;
-
-- multi_agent_rule_based:
-    orchestrator routes the task to specialized agents;
-    specialized agents call only their task-specific tools;
-    reporter formats the final answer.
-
-Supported scenarios:
-- high TEC interval detection;
-- TEC statistics comparison across regions.
-- stable/low-variability TEC interval detection;
-- structured TEC reports.
+Agents do not call each other directly. RuleBasedMultiAgent coordinates all
+stage transitions through the orchestrator-owned workflow.
 """
 
 from __future__ import annotations
@@ -59,6 +53,15 @@ MONTHS: dict[str, int] = {
     "december": 12,
     "dec": 12,
 }
+
+DEFAULT_REPORT_INCLUDE = ["basic_stats", "high_tec", "stable_intervals"]
+EXPECTED_ROLE_AGENT_ORDER = [
+    "orchestrator",
+    "data_agent",
+    "math_agent",
+    "analysis_agent",
+    "report_agent",
+]
 
 
 @dataclass
@@ -102,13 +105,13 @@ class MultiAgentResult:
 
 
 class RuleBasedOrchestrator:
-    """Rule-based orchestrator that parses and routes user queries."""
+    """Rule-based orchestrator that parses queries and builds role plans."""
 
     def __init__(self, dataset_ref: str = "default") -> None:
         self.dataset_ref = dataset_ref
 
-    def parse_and_route(self, query: str) -> tuple[ParsedMultiAgentTask, str, MultiAgentStep]:
-        """Parse query and return selected worker name."""
+    def parse(self, query: str) -> ParsedMultiAgentTask:
+        """Parse a supported natural-language query into structured fields."""
 
         lower = query.lower()
 
@@ -121,7 +124,7 @@ class RuleBasedOrchestrator:
             if len(region_ids) < 2:
                 raise ValueError("Compare task requires at least two recognized regions")
 
-            parsed = ParsedMultiAgentTask(
+            return ParsedMultiAgentTask(
                 task_type=task_type,
                 dataset_ref=self.dataset_ref,
                 region_id=None,
@@ -134,11 +137,10 @@ class RuleBasedOrchestrator:
                 metrics=self._default_compare_metrics(),
                 raw_query=query,
             )
-            worker = "compare_worker"
 
-        elif task_type == "high_tec":
+        if task_type == "high_tec":
             region_id = self._extract_region_id(lower)
-            parsed = ParsedMultiAgentTask(
+            return ParsedMultiAgentTask(
                 task_type=task_type,
                 dataset_ref=self.dataset_ref,
                 region_id=region_id,
@@ -151,11 +153,10 @@ class RuleBasedOrchestrator:
                 metrics=self._default_compare_metrics(),
                 raw_query=query,
             )
-            worker = "high_tec_worker"
 
-        elif task_type == "stable_intervals":
+        if task_type == "stable_intervals":
             region_id = self._extract_region_id(lower)
-            parsed = ParsedMultiAgentTask(
+            return ParsedMultiAgentTask(
                 task_type=task_type,
                 dataset_ref=self.dataset_ref,
                 region_id=region_id,
@@ -171,14 +172,13 @@ class RuleBasedOrchestrator:
                 metrics=self._default_compare_metrics(),
                 raw_query=query,
             )
-            worker = "stable_worker"
 
-        elif task_type == "report":
+        if task_type == "report":
             region_ids = self._extract_region_ids(lower)
             if not region_ids:
                 region_ids = ["midlat_europe"]
 
-            parsed = ParsedMultiAgentTask(
+            return ParsedMultiAgentTask(
                 task_type=task_type,
                 dataset_ref=self.dataset_ref,
                 region_id=None,
@@ -191,36 +191,55 @@ class RuleBasedOrchestrator:
                 metrics=self._default_compare_metrics(),
                 raw_query=query,
             )
-            worker = "report_worker"
 
-        else:
-            raise ValueError(
-                f"Unsupported task_type={task_type!r}. "
-                "Multi-agent baseline supports high_tec, compare_regions, "
-                "stable_intervals and report."
-            )
-
-        step = MultiAgentStep(
-            node="orchestrator",
-            action="route_task",
-            details={
-                "task_type": parsed.task_type,
-                "worker": worker,
-                "region_id": parsed.region_id,
-                "region_ids": parsed.region_ids,
-                "regions": parsed.regions,
-                "start": parsed.start,
-                "end": parsed.end,
-                "q": parsed.q,
-                "window_minutes": parsed.window_minutes,
-                "q_delta": parsed.q_delta,
-                "q_std": parsed.q_std,
-                "include": parsed.include,
-                "metrics": parsed.metrics,
-            },
+        raise ValueError(
+            f"Unsupported task_type={task_type!r}. "
+            "Multi-agent baseline supports high_tec, compare_regions, "
+            "stable_intervals and report."
         )
 
-        return parsed, worker, step
+    def build_plan(self, parsed: ParsedMultiAgentTask) -> MultiAgentStep:
+        """Build a deterministic role workflow plan for a parsed task."""
+
+        details = {
+            "task_type": parsed.task_type,
+            "workflow": "role_based",
+            "worker": "role_based_workflow",
+            "selected_worker": "role_based_workflow",
+            "stages": ["data", "math", "analysis", "report"],
+            "expected_role_agent_order": EXPECTED_ROLE_AGENT_ORDER,
+            "region_id": parsed.region_id,
+            "region_ids": parsed.region_ids,
+            "regions": parsed.regions,
+            "start": parsed.start,
+            "end": parsed.end,
+            "q": parsed.q,
+            "window_minutes": parsed.window_minutes,
+            "q_delta": parsed.q_delta,
+            "q_std": parsed.q_std,
+            "include": _report_include(parsed.include),
+            "metrics": parsed.metrics,
+        }
+
+        return MultiAgentStep(
+            node="orchestrator",
+            action="build_plan",
+            details=details,
+        )
+
+    def parse_and_route(
+        self,
+        query: str,
+    ) -> tuple[ParsedMultiAgentTask, str, MultiAgentStep]:
+        """
+        Backward-compatible wrapper for callers that still expect a route.
+
+        The returned worker is the role-based workflow marker, not a
+        task-specific worker.
+        """
+
+        parsed = self.parse(query)
+        return parsed, "role_based_workflow", self.build_plan(parsed)
 
     def _extract_task_type(self, lower_query: str) -> str:
         """Extract supported task type."""
@@ -249,7 +268,12 @@ class RuleBasedOrchestrator:
         if any(marker in lower_query for marker in stable_markers):
             return "stable_intervals"
 
-        compare_markers = ["compare", "comparison", "сравни", "сравнение"]
+        compare_markers = [
+            "compare",
+            "comparison",
+            "\u0441\u0440\u0430\u0432\u043d\u0438",
+            "\u0441\u0440\u0430\u0432\u043d\u0435\u043d\u0438\u0435",
+        ]
 
         if any(marker in lower_query for marker in compare_markers):
             return "compare_regions"
@@ -341,10 +365,20 @@ class RuleBasedOrchestrator:
     def _extract_report_include(self, lower_query: str) -> list[str]:
         """Extract report sections or return the deterministic default."""
 
-        if "basic_stats" in lower_query or "basic stats" in lower_query:
-            return ["basic_stats"]
+        include: list[str] = []
 
-        return ["basic_stats", "high_tec", "stable_intervals"]
+        if "basic_stats" in lower_query or "basic stats" in lower_query:
+            include.append("basic_stats")
+        if "high_tec" in lower_query or "high tec" in lower_query:
+            include.append("high_tec")
+        if (
+            "stable_intervals" in lower_query
+            or "stable intervals" in lower_query
+            or "low variability" in lower_query
+        ):
+            include.append("stable_intervals")
+
+        return include or list(DEFAULT_REPORT_INCLUDE)
 
     def _default_compare_metrics(self) -> list[str]:
         """Return deterministic metrics used in compare-region primitive chains."""
@@ -352,97 +386,32 @@ class RuleBasedOrchestrator:
         return ["mean", "median", "min", "max", "std", "p90", "p95"]
 
 
-class HighTecWorkerAgent:
-    """Specialized worker for high-TEC detection."""
+class OrchestratorAgent(RuleBasedOrchestrator):
+    """Named role alias for future LLM-backed orchestrator integrations."""
 
-    def __init__(self, client: LocalMCPClient, agent_name: str = "high_tec_worker") -> None:
+
+class DataAgent:
+    """Role agent responsible only for data loading."""
+
+    allowed_tools = {"tec_get_timeseries", "tec_series_profile"}
+
+    def __init__(self, client: LocalMCPClient, agent_name: str = "data_agent") -> None:
         self.client = client
         self.agent_name = agent_name
 
-    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
-        """Run high-TEC tool sequence."""
+    def load_series_for_regions(
+        self,
+        parsed: ParsedMultiAgentTask,
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Load all required time series before any math stage runs."""
 
-        if parsed.region_id is None:
-            raise ValueError("High-TEC task requires region_id")
+        regions = _regions_for_parsed(parsed)
+        if not regions:
+            raise ValueError(f"Task {parsed.task_type!r} requires at least one region")
 
-        ts_result = self.client.call_tool_result(
-            "tec_get_timeseries",
-            {
-                "dataset_ref": parsed.dataset_ref,
-                "region_id": parsed.region_id,
-                "start": parsed.start,
-                "end": parsed.end,
-            },
-            agent_name=self.agent_name,
-            step=1,
-        )
+        series_by_region: dict[str, dict[str, Any]] = {}
 
-        series_id = ts_result["series_id"]
-
-        threshold_result = self.client.call_tool_result(
-            "tec_compute_high_threshold",
-            {
-                "series_id": series_id,
-                "method": "quantile",
-                "q": parsed.q,
-            },
-            agent_name=self.agent_name,
-            step=2,
-        )
-
-        threshold_id = threshold_result["threshold_id"]
-
-        intervals_result = self.client.call_tool_result(
-            "tec_detect_high_intervals",
-            {
-                "series_id": series_id,
-                "threshold_id": threshold_id,
-                "min_duration_minutes": 0,
-                "merge_gap_minutes": 60,
-            },
-            agent_name=self.agent_name,
-            step=3,
-        )
-
-        tool_results = {
-            "timeseries": ts_result,
-            "threshold": threshold_result,
-            "intervals": intervals_result,
-        }
-
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="detect_high_tec_intervals",
-            details={
-                "region_id": parsed.region_id,
-                "series_id": series_id,
-                "threshold_id": threshold_id,
-                "n_intervals": intervals_result["n_intervals"],
-            },
-        )
-
-        return tool_results, step
-
-
-class CompareWorkerAgent:
-    """Specialized worker for regional TEC comparison."""
-
-    def __init__(self, client: LocalMCPClient, agent_name: str = "compare_worker") -> None:
-        self.client = client
-        self.agent_name = agent_name
-
-    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
-        """Run primitive region-comparison tool sequence."""
-
-        if len(parsed.region_ids) < 2:
-            raise ValueError("Comparison task requires at least two region_ids")
-
-        timeseries_results: list[dict[str, Any]] = []
-        stats_results: list[dict[str, Any]] = []
-        stats_ids: list[str] = []
-
-        step = 1
-        for region_id in parsed.region_ids:
+        for step, region_id in enumerate(regions, start=1):
             ts_result = self.client.call_tool_result(
                 "tec_get_timeseries",
                 {
@@ -454,76 +423,137 @@ class CompareWorkerAgent:
                 agent_name=self.agent_name,
                 step=step,
             )
-            timeseries_results.append(ts_result)
-            step += 1
 
-            stats_result = self.client.call_tool_result(
-                "tec_compute_series_stats",
-                {
-                    "series_id": ts_result["series_id"],
-                    "metrics": parsed.metrics,
-                },
-                agent_name=self.agent_name,
-                step=step,
-            )
-            stats_results.append(stats_result)
-            stats_ids.append(stats_result["stats_id"])
-            step += 1
+            series_by_region[region_id] = {
+                "series_id": ts_result["series_id"],
+                "tool_result": ts_result,
+                "metadata": ts_result.get("metadata"),
+            }
 
-        comparison_result = self.client.call_tool_result(
-            "tec_compare_stats",
-            {
-                "stats_ids": stats_ids,
-                "metrics": parsed.metrics,
-            },
-            agent_name=self.agent_name,
-            step=step,
-        )
+        artifacts = {
+            "series_by_region": series_by_region,
+            "regions": regions,
+            "dataset_ref": parsed.dataset_ref,
+            "start": parsed.start,
+            "end": parsed.end,
+        }
 
         step = MultiAgentStep(
             node=self.agent_name,
-            action="compare_regions",
+            action="load_series",
             details={
-                "region_ids": parsed.region_ids,
-                "stats_ids": stats_ids,
-                "comparison_id": comparison_result["comparison_id"],
-                "n_regions": len(comparison_result["items"]),
+                "regions": regions,
+                "series_ids": {
+                    region_id: item["series_id"]
+                    for region_id, item in series_by_region.items()
+                },
+                "n_series": len(series_by_region),
             },
         )
 
-        return {
-            "timeseries": timeseries_results,
-            "stats": stats_results,
-            "comparison": comparison_result,
-        }, step
+        return artifacts, step
 
 
-class StableWorkerAgent:
-    """Specialized worker for stable/low-variability TEC intervals."""
+class MathAgent:
+    """Role agent responsible only for deterministic computations."""
 
-    def __init__(self, client: LocalMCPClient, agent_name: str = "stable_worker") -> None:
+    allowed_tools = {
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+        "tec_compute_stability_thresholds",
+        "tec_detect_stable_intervals",
+        "tec_compute_series_stats",
+        "tec_compare_stats",
+    }
+
+    def __init__(self, client: LocalMCPClient, agent_name: str = "math_agent") -> None:
         self.client = client
         self.agent_name = agent_name
 
-    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
-        """Run stable-interval tool sequence."""
+    def compute_for_task(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Dispatch task-specific math while keeping data access separate."""
 
-        if parsed.region_id is None:
-            raise ValueError("Stable-interval task requires region_id")
+        if parsed.task_type == "high_tec":
+            return self._compute_high_tec(parsed, data_artifacts)
 
-        ts_result = self.client.call_tool_result(
-            "tec_get_timeseries",
+        if parsed.task_type == "stable_intervals":
+            return self._compute_stable_intervals(parsed, data_artifacts)
+
+        if parsed.task_type == "compare_regions":
+            return self._compute_compare_regions(parsed, data_artifacts)
+
+        if parsed.task_type == "report":
+            return self._compute_report_inputs(parsed, data_artifacts)
+
+        raise ValueError(f"Unsupported task type for MathAgent: {parsed.task_type!r}")
+
+    def _compute_high_tec(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Compute high-TEC thresholds and intervals for one region."""
+
+        region_id = _first_region(parsed)
+        series_id = _series_id_for_region(data_artifacts, region_id)
+
+        threshold_result = self.client.call_tool_result(
+            "tec_compute_high_threshold",
             {
-                "dataset_ref": parsed.dataset_ref,
-                "region_id": parsed.region_id,
-                "start": parsed.start,
-                "end": parsed.end,
+                "series_id": series_id,
+                "method": "quantile",
+                "q": parsed.q,
             },
             agent_name=self.agent_name,
             step=1,
         )
 
-        series_id = ts_result["series_id"]
+        intervals_result = self.client.call_tool_result(
+            "tec_detect_high_intervals",
+            {
+                "series_id": series_id,
+                "threshold_id": threshold_result["threshold_id"],
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60,
+            },
+            agent_name=self.agent_name,
+            step=2,
+        )
+
+        artifacts = {
+            "high_tec": {
+                region_id: {
+                    "threshold": threshold_result,
+                    "intervals": intervals_result,
+                }
+            }
+        }
+
+        step = MultiAgentStep(
+            node=self.agent_name,
+            action="compute_high_tec",
+            details={
+                "regions": [region_id],
+                "n_thresholds": 1,
+                "n_interval_results": 1,
+            },
+        )
+
+        return artifacts, step
+
+    def _compute_stable_intervals(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Compute stable interval thresholds and detections for one region."""
+
+        region_id = _first_region(parsed)
+        series_id = _series_id_for_region(data_artifacts, region_id)
 
         thresholds_result = self.client.call_tool_result(
             "tec_compute_stability_thresholds",
@@ -535,7 +565,7 @@ class StableWorkerAgent:
                 "q_std": parsed.q_std,
             },
             agent_name=self.agent_name,
-            step=2,
+            step=1,
         )
 
         intervals_result = self.client.call_tool_result(
@@ -547,91 +577,509 @@ class StableWorkerAgent:
                 "merge_gap_minutes": 60,
             },
             agent_name=self.agent_name,
-            step=3,
+            step=2,
         )
 
-        tool_results = {
-            "timeseries": ts_result,
-            "thresholds": thresholds_result,
-            "intervals": intervals_result,
+        artifacts = {
+            "stable_intervals": {
+                region_id: {
+                    "thresholds": thresholds_result,
+                    "intervals": intervals_result,
+                }
+            }
         }
 
         step = MultiAgentStep(
             node=self.agent_name,
-            action="detect_stable_intervals",
+            action="compute_stable_intervals",
             details={
-                "region_id": parsed.region_id,
-                "series_id": series_id,
-                "threshold_id": thresholds_result["threshold_id"],
-                "n_intervals": intervals_result["n_intervals"],
+                "regions": [region_id],
+                "n_thresholds": 1,
+                "n_interval_results": 1,
             },
         )
 
-        return tool_results, step
+        return artifacts, step
 
+    def _compute_compare_regions(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Compute all region stats first, then compare the stats handles."""
 
-class ReportWorkerAgent:
-    """Specialized worker for structured TEC reports."""
+        regions = _regions_for_parsed(parsed)
+        if len(regions) < 2:
+            raise ValueError("Comparison task requires at least two region_ids")
 
-    def __init__(self, client: LocalMCPClient, agent_name: str = "report_worker") -> None:
-        self.client = client
-        self.agent_name = agent_name
+        stats_by_region: dict[str, dict[str, Any]] = {}
+        stats_ids: list[str] = []
 
-    def run(self, parsed: ParsedMultiAgentTask) -> tuple[dict[str, Any], MultiAgentStep]:
-        """Run one structured report tool call."""
+        for step, region_id in enumerate(regions, start=1):
+            series_id = _series_id_for_region(data_artifacts, region_id)
+            stats_result = self.client.call_tool_result(
+                "tec_compute_series_stats",
+                {
+                    "series_id": series_id,
+                    "metrics": parsed.metrics,
+                },
+                agent_name=self.agent_name,
+                step=step,
+            )
 
-        if not parsed.region_ids:
-            raise ValueError("Report task requires at least one region")
+            stats_by_region[region_id] = {
+                "stats_id": stats_result["stats_id"],
+                "series_id": series_id,
+                "stats": stats_result,
+                "metrics": stats_result.get("metrics", {}),
+            }
+            stats_ids.append(stats_result["stats_id"])
 
-        report_result = self.client.call_tool_result(
-            "tec_build_report",
+        comparison_result = self.client.call_tool_result(
+            "tec_compare_stats",
             {
-                "dataset_ref": parsed.dataset_ref,
-                "regions": parsed.region_ids,
-                "start": parsed.start,
-                "end": parsed.end,
-                "include": parsed.include,
+                "stats_ids": stats_ids,
+                "metrics": parsed.metrics,
             },
             agent_name=self.agent_name,
-            step=1,
+            step=len(regions) + 1,
         )
+
+        artifacts = {
+            "stats_by_region": stats_by_region,
+            "comparison": comparison_result,
+        }
 
         step = MultiAgentStep(
             node=self.agent_name,
-            action="build_report",
+            action="compute_region_comparison",
             details={
-                "regions": parsed.region_ids,
-                "report_id": report_result["report_id"],
-                "sections": sorted(report_result.get("sections", {})),
+                "regions": regions,
+                "stats_ids": {
+                    region_id: item["stats_id"]
+                    for region_id, item in stats_by_region.items()
+                },
+                "comparison_id": comparison_result["comparison_id"],
+                "n_regions": len(regions),
             },
         )
 
-        return report_result, step
+        return artifacts, step
+
+    def _compute_report_inputs(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Compute primitive artifacts needed for a structured TEC report."""
+
+        regions = _regions_for_parsed(parsed)
+        include = _report_include(parsed.include)
+        report_inputs: dict[str, Any] = {}
+        step = 1
+
+        n_stats = 0
+        has_comparison = False
+        n_high_results = 0
+        n_stable_results = 0
+
+        if "basic_stats" in include:
+            by_region: dict[str, dict[str, Any]] = {}
+            stats_ids: list[str] = []
+
+            for region_id in regions:
+                series_id = _series_id_for_region(data_artifacts, region_id)
+                stats_result = self.client.call_tool_result(
+                    "tec_compute_series_stats",
+                    {
+                        "series_id": series_id,
+                        "metrics": parsed.metrics,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "stats_id": stats_result["stats_id"],
+                    "series_id": series_id,
+                    "stats": stats_result,
+                    "metrics": stats_result.get("metrics", {}),
+                }
+                stats_ids.append(stats_result["stats_id"])
+
+            comparison = None
+            if len(stats_ids) >= 2:
+                comparison = self.client.call_tool_result(
+                    "tec_compare_stats",
+                    {
+                        "stats_ids": stats_ids,
+                        "metrics": parsed.metrics,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+                has_comparison = True
+
+            report_inputs["basic_stats"] = {
+                "by_region": by_region,
+                "comparison": comparison,
+            }
+            n_stats = len(by_region)
+
+        if "high_tec" in include:
+            by_region = {}
+
+            for region_id in regions:
+                series_id = _series_id_for_region(data_artifacts, region_id)
+                threshold_result = self.client.call_tool_result(
+                    "tec_compute_high_threshold",
+                    {
+                        "series_id": series_id,
+                        "method": "quantile",
+                        "q": parsed.q,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.client.call_tool_result(
+                    "tec_detect_high_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": threshold_result["threshold_id"],
+                        "min_duration_minutes": 0,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "threshold": threshold_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["high_tec"] = {"by_region": by_region}
+            n_high_results = len(by_region)
+
+        if "stable_intervals" in include:
+            by_region = {}
+
+            for region_id in regions:
+                series_id = _series_id_for_region(data_artifacts, region_id)
+                thresholds_result = self.client.call_tool_result(
+                    "tec_compute_stability_thresholds",
+                    {
+                        "series_id": series_id,
+                        "window_minutes": parsed.window_minutes,
+                        "method": "quantile",
+                        "q_delta": parsed.q_delta,
+                        "q_std": parsed.q_std,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.client.call_tool_result(
+                    "tec_detect_stable_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": thresholds_result["threshold_id"],
+                        "min_duration_minutes": parsed.window_minutes,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name=self.agent_name,
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "thresholds": thresholds_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["stable_intervals"] = {"by_region": by_region}
+            n_stable_results = len(by_region)
+
+        artifacts = {"report_inputs": report_inputs}
+
+        math_step = MultiAgentStep(
+            node=self.agent_name,
+            action="compute_report_inputs",
+            details={
+                "regions": regions,
+                "include": include,
+                "n_stats": n_stats,
+                "has_comparison": has_comparison,
+                "n_high_tec_results": n_high_results,
+                "n_stable_results": n_stable_results,
+            },
+        )
+
+        return artifacts, math_step
 
 
-class ReporterAgent:
-    """Specialized reporter that formats final answers."""
+class AnalysisAgent:
+    """Role agent responsible for deterministic artifact interpretation."""
 
-    def __init__(self, agent_name: str = "reporter_agent") -> None:
+    allowed_tools: set[str] = set()
+
+    def __init__(self, agent_name: str = "analysis_agent") -> None:
+        self.agent_name = agent_name
+
+    def analyze(
+        self,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        """Create structured findings without calling computational tools."""
+
+        findings: list[dict[str, Any]] = []
+
+        if parsed.task_type == "compare_regions":
+            findings.extend(self._analyze_comparison(math_artifacts))
+        elif parsed.task_type == "high_tec":
+            findings.extend(self._analyze_high_tec(math_artifacts.get("high_tec", {})))
+        elif parsed.task_type == "stable_intervals":
+            findings.extend(
+                self._analyze_stable_intervals(
+                    math_artifacts.get("stable_intervals", {})
+                )
+            )
+        elif parsed.task_type == "report":
+            findings.extend(self._analyze_report(math_artifacts))
+
+        summary = self._summary(
+            parsed=parsed,
+            data_artifacts=data_artifacts,
+            math_artifacts=math_artifacts,
+            findings=findings,
+        )
+
+        artifacts = {
+            "findings": findings,
+            "summary": summary,
+        }
+
+        step = MultiAgentStep(
+            node=self.agent_name,
+            action="analyze_results",
+            details={
+                "task_type": parsed.task_type,
+                "n_findings": len(findings),
+                "finding_types": sorted(
+                    {
+                        str(finding.get("type"))
+                        for finding in findings
+                        if finding.get("type") is not None
+                    }
+                ),
+            },
+        )
+
+        return artifacts, step
+
+    def _analyze_comparison(
+        self,
+        math_artifacts: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Analyze comparison stats for leader metrics."""
+
+        comparison = math_artifacts.get("comparison") or {}
+        items = comparison.get("items") or []
+        return [
+            _leader_finding(items, metric="mean"),
+            _leader_finding(items, metric="p90"),
+            _leader_finding(items, metric="max"),
+        ]
+
+    def _analyze_high_tec(
+        self,
+        by_region: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Analyze high-TEC artifacts by region."""
+
+        findings: list[dict[str, Any]] = []
+
+        for region_id, item in by_region.items():
+            threshold = item.get("threshold") or {}
+            intervals = item.get("intervals") or {}
+            interval_records = intervals.get("intervals") or []
+            peak = _max_interval_value(interval_records, "peak_value")
+
+            findings.append(
+                {
+                    "type": "high_tec_interval_count",
+                    "region_id": region_id,
+                    "value": intervals.get("n_intervals"),
+                    "text": (
+                        f"{region_id} has {intervals.get('n_intervals')} "
+                        "high TEC intervals."
+                    ),
+                }
+            )
+            findings.append(
+                {
+                    "type": "high_tec_threshold",
+                    "region_id": region_id,
+                    "value": threshold.get("value"),
+                    "text": (
+                        f"{region_id} high TEC threshold is "
+                        f"{_fmt_float(threshold.get('value'))} TECU."
+                    ),
+                }
+            )
+            findings.append(
+                {
+                    "type": "high_tec_global_peak",
+                    "region_id": region_id,
+                    "value": peak,
+                    "text": (
+                        f"{region_id} global high TEC peak is "
+                        f"{_fmt_float(peak)} TECU."
+                    ),
+                }
+            )
+
+        return findings
+
+    def _analyze_stable_intervals(
+        self,
+        by_region: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Analyze stable interval artifacts by region."""
+
+        findings: list[dict[str, Any]] = []
+
+        for region_id, item in by_region.items():
+            intervals = item.get("intervals") or {}
+            interval_records = intervals.get("intervals") or []
+            longest = _max_interval_value(interval_records, "duration_minutes")
+
+            findings.append(
+                {
+                    "type": "stable_interval_count",
+                    "region_id": region_id,
+                    "value": intervals.get("n_intervals"),
+                    "text": (
+                        f"{region_id} has {intervals.get('n_intervals')} "
+                        "stable TEC intervals."
+                    ),
+                }
+            )
+            findings.append(
+                {
+                    "type": "stable_longest_interval",
+                    "region_id": region_id,
+                    "value": longest,
+                    "text": (
+                        f"{region_id} longest stable interval is "
+                        f"{_fmt_float(longest)} minutes."
+                    ),
+                }
+            )
+
+        return findings
+
+    def _analyze_report(self, math_artifacts: dict[str, Any]) -> list[dict[str, Any]]:
+        """Analyze report input artifacts across all included sections."""
+
+        report_inputs = math_artifacts.get("report_inputs") or {}
+        findings: list[dict[str, Any]] = []
+
+        basic = report_inputs.get("basic_stats") or {}
+        comparison = basic.get("comparison")
+        if comparison:
+            findings.extend(self._analyze_comparison({"comparison": comparison}))
+
+        high = report_inputs.get("high_tec") or {}
+        findings.extend(self._analyze_high_tec(high.get("by_region") or {}))
+
+        stable = report_inputs.get("stable_intervals") or {}
+        findings.extend(self._analyze_stable_intervals(stable.get("by_region") or {}))
+
+        return findings
+
+    def _summary(
+        self,
+        *,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        findings: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build a compact deterministic summary from artifacts."""
+
+        regions = data_artifacts.get("regions") or _regions_for_parsed(parsed)
+        primary_region = None
+
+        for finding in findings:
+            if finding.get("type") == "comparison_leader":
+                primary_region = finding.get("region_id")
+                break
+
+        if primary_region is None and regions:
+            primary_region = regions[0]
+
+        high_total = 0
+        stable_total = 0
+
+        high_by_region = _high_tec_artifacts_by_region(math_artifacts)
+        for item in high_by_region.values():
+            intervals = item.get("intervals") or {}
+            high_total += int(intervals.get("n_intervals") or 0)
+
+        stable_by_region = _stable_artifacts_by_region(math_artifacts)
+        for item in stable_by_region.values():
+            intervals = item.get("intervals") or {}
+            stable_total += int(intervals.get("n_intervals") or 0)
+
+        return {
+            "primary_region": primary_region,
+            "n_regions": len(regions),
+            "n_high_tec_intervals_total": high_total,
+            "n_stable_intervals_total": stable_total,
+        }
+
+
+class ReportAgent:
+    """Role agent responsible only for final answer formatting."""
+
+    allowed_tools: set[str] = set()
+
+    def __init__(self, agent_name: str = "report_agent") -> None:
         self.agent_name = agent_name
 
     def format_answer(
         self,
         parsed: ParsedMultiAgentTask,
-        tool_results: dict[str, Any],
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        analysis_artifacts: dict[str, Any],
     ) -> tuple[str, MultiAgentStep]:
-        """Format final answer based on task type."""
+        """Format a deterministic final answer from existing artifacts."""
 
         if parsed.task_type == "high_tec":
-            answer = self._format_high_tec_answer(parsed, tool_results)
+            answer = self._format_high_tec_answer(parsed, math_artifacts)
         elif parsed.task_type == "compare_regions":
-            answer = self._format_compare_regions_answer(parsed, tool_results)
+            answer = self._format_compare_regions_answer(parsed, math_artifacts)
         elif parsed.task_type == "stable_intervals":
-            answer = self._format_stable_intervals_answer(parsed, tool_results)
+            answer = self._format_stable_intervals_answer(parsed, math_artifacts)
         elif parsed.task_type == "report":
-            answer = self._format_report_answer(parsed, tool_results)
+            answer = self._format_report_answer(
+                parsed=parsed,
+                data_artifacts=data_artifacts,
+                math_artifacts=math_artifacts,
+                analysis_artifacts=analysis_artifacts,
+            )
         else:
-            raise ValueError(f"Unsupported task type for reporter: {parsed.task_type!r}")
+            raise ValueError(f"Unsupported task type for ReportAgent: {parsed.task_type!r}")
 
         step = MultiAgentStep(
             node=self.agent_name,
@@ -647,104 +1095,38 @@ class ReporterAgent:
     def _format_high_tec_answer(
         self,
         parsed: ParsedMultiAgentTask,
-        tool_results: dict[str, Any],
+        math_artifacts: dict[str, Any],
     ) -> str:
-        """Create a compact human-readable answer for high-TEC task."""
+        """Create a compact answer for high-TEC tasks."""
 
-        threshold = tool_results["threshold"]
-        intervals = tool_results["intervals"]
-
-        lines = [
-            (
-                f"High TEC intervals for {parsed.region_id} from "
-                f"{parsed.start} to {parsed.end} using q={parsed.q}:"
-            ),
-            (
-                f"Threshold: {threshold['value']:.3f} TECU "
-                f"({threshold['method']}, n={threshold['n_points_used']})."
-            ),
-            f"Detected intervals: {intervals['n_intervals']}.",
-        ]
-
-        if intervals["n_intervals"] == 0:
-            lines.append("No high-TEC intervals were detected.")
-            return "\n".join(lines)
-
-        lines.append("")
-        lines.append("Intervals:")
-
-        for i, item in enumerate(intervals["intervals"], start=1):
-            peak_value = item["peak_value"]
-            mean_value = item["mean_value"]
-
-            peak_text = (
-                f"{peak_value:.3f} TECU at {item['peak_time']}"
-                if peak_value is not None
-                else "n/a"
-            )
-            mean_text = f"{mean_value:.3f} TECU" if mean_value is not None else "n/a"
-
-            lines.append(
-                f"{i}. {item['start']} -> {item['end']}; "
-                f"duration={item['duration_minutes']:.1f} min; "
-                f"peak={peak_text}; "
-                f"mean={mean_text}."
-            )
-
-        return "\n".join(lines)
-
-    def _format_stable_intervals_answer(
-        self,
-        parsed: ParsedMultiAgentTask,
-        tool_results: dict[str, Any],
-    ) -> str:
-        """Create a compact answer for stable interval tasks."""
-
-        thresholds = tool_results["thresholds"]
-        intervals = tool_results["intervals"]
+        region_id = _first_region(parsed)
+        item = (math_artifacts.get("high_tec") or {})[region_id]
+        threshold = item["threshold"]
+        intervals = item["intervals"]
 
         return (
-            f"Stable TEC intervals for {parsed.region_id} from {parsed.start} "
-            f"to {parsed.end}: detected {intervals['n_intervals']} intervals "
-            f"using window={thresholds['window_minutes']} min, "
-            f"max_delta={thresholds['max_delta_threshold']:.3f}, "
-            f"rolling_std={thresholds['rolling_std_threshold']:.3f}."
-        )
-
-    def _format_report_answer(
-        self,
-        parsed: ParsedMultiAgentTask,
-        tool_results: dict[str, Any],
-    ) -> str:
-        """Create a compact answer for structured report tasks."""
-
-        sections = sorted(tool_results.get("sections", {}))
-        return (
-            f"Built TEC report {tool_results['report_id']} for "
-            f"{', '.join(parsed.region_ids)} from {parsed.start} to {parsed.end}. "
-            f"Sections: {', '.join(sections)}."
+            f"High TEC intervals for {region_id} from {parsed.start} "
+            f"to {parsed.end}: threshold={threshold['value']:.3f} TECU "
+            f"(q={parsed.q}), detected {intervals['n_intervals']} intervals."
         )
 
     def _format_compare_regions_answer(
         self,
         parsed: ParsedMultiAgentTask,
-        tool_results: dict[str, Any],
+        math_artifacts: dict[str, Any],
     ) -> str:
-        """Create a compact human-readable answer for region comparison."""
+        """Create a compact answer for region comparison."""
 
+        comparison = math_artifacts["comparison"]
         lines = [
             (
                 f"TEC statistics comparison for {', '.join(parsed.region_ids)} "
                 f"from {parsed.start} to {parsed.end}:"
-            ),
-            "",
+            )
         ]
 
-        comparison = _extract_comparison_payload(tool_results)
-        stats = comparison["items"]
-
-        for item in stats:
-            metrics = item.get("metrics", {})
+        for item in comparison.get("items", []):
+            metrics = item.get("metrics") or {}
             lines.append(
                 f"- {item['region_id']}: "
                 f"mean={_fmt_float(metrics.get('mean'))} TECU, "
@@ -756,13 +1138,101 @@ class ReporterAgent:
 
         return "\n".join(lines)
 
+    def _format_stable_intervals_answer(
+        self,
+        parsed: ParsedMultiAgentTask,
+        math_artifacts: dict[str, Any],
+    ) -> str:
+        """Create a compact answer for stable interval tasks."""
+
+        region_id = _first_region(parsed)
+        item = (math_artifacts.get("stable_intervals") or {})[region_id]
+        thresholds = item["thresholds"]
+        intervals = item["intervals"]
+
+        return (
+            f"Stable TEC intervals for {region_id} from {parsed.start} "
+            f"to {parsed.end}: detected {intervals['n_intervals']} intervals "
+            f"using window={thresholds['window_minutes']} min, "
+            f"max_delta={thresholds['max_delta_threshold']:.3f}, "
+            f"rolling_std={thresholds['rolling_std_threshold']:.3f}."
+        )
+
+    def _format_report_answer(
+        self,
+        *,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        analysis_artifacts: dict[str, Any],
+    ) -> str:
+        """Create a compact structured answer for report tasks."""
+
+        regions = data_artifacts.get("regions") or parsed.region_ids
+        include = _report_include(parsed.include)
+        report_inputs = math_artifacts.get("report_inputs") or {}
+        findings = analysis_artifacts.get("findings") or []
+
+        lines = [
+            (
+                f"TEC report for {', '.join(regions)} from {parsed.start} "
+                f"to {parsed.end}."
+            ),
+            f"Sections: {', '.join(include)}.",
+        ]
+
+        if findings:
+            lines.append("Main findings:")
+            for finding in findings[:5]:
+                lines.append(f"- {finding.get('text')}")
+
+        basic = report_inputs.get("basic_stats") or {}
+        comparison = basic.get("comparison")
+        if comparison:
+            lines.append("Basic statistics:")
+            for item in comparison.get("items", []):
+                metrics = item.get("metrics") or {}
+                lines.append(
+                    f"- {item['region_id']}: "
+                    f"mean={_fmt_float(metrics.get('mean'))}, "
+                    f"max={_fmt_float(metrics.get('max'))}, "
+                    f"p90={_fmt_float(metrics.get('p90'))}."
+                )
+
+        high = report_inputs.get("high_tec") or {}
+        high_by_region = high.get("by_region") or {}
+        if high_by_region:
+            lines.append("High TEC:")
+            for region_id, item in high_by_region.items():
+                threshold = item.get("threshold") or {}
+                intervals = item.get("intervals") or {}
+                lines.append(
+                    f"- {region_id}: threshold={_fmt_float(threshold.get('value'))}, "
+                    f"intervals={intervals.get('n_intervals')}."
+                )
+
+        stable = report_inputs.get("stable_intervals") or {}
+        stable_by_region = stable.get("by_region") or {}
+        if stable_by_region:
+            lines.append("Stable intervals:")
+            for region_id, item in stable_by_region.items():
+                thresholds = item.get("thresholds") or {}
+                intervals = item.get("intervals") or {}
+                lines.append(
+                    f"- {region_id}: intervals={intervals.get('n_intervals')}, "
+                    f"window={thresholds.get('window_minutes')} min."
+                )
+
+        return "\n".join(lines)
+
 
 class RuleBasedMultiAgent:
     """
-    Deterministic multi-agent baseline.
+    Deterministic role-based multi-agent baseline.
 
-    The orchestrator parses and routes the task. Specialized worker agents call
-    tools. Reporter agent formats final answer.
+    The orchestrator parses and plans. DataAgent loads all data first,
+    MathAgent computes numerical artifacts, AnalysisAgent creates findings,
+    and ReportAgent formats the final answer.
     """
 
     def __init__(
@@ -774,56 +1244,99 @@ class RuleBasedMultiAgent:
         self.dataset_ref = dataset_ref
 
         self.orchestrator = RuleBasedOrchestrator(dataset_ref=dataset_ref)
-        self.high_tec_agent = HighTecWorkerAgent(client=client)
-        self.compare_agent = CompareWorkerAgent(client=client)
-        self.stable_agent = StableWorkerAgent(client=client)
-        self.report_agent = ReportWorkerAgent(client=client)
-        self.reporter_agent = ReporterAgent()
+        self.data_agent = DataAgent(client=client)
+        self.math_agent = MathAgent(client=client)
+        self.analysis_agent = AnalysisAgent()
+        self.report_agent = ReportAgent()
 
     def reset(self) -> None:
-        """
-        Reset underlying MCP client state if supported.
-
-        This keeps traces and intermediate tool stores isolated per task.
-        """
+        """Reset underlying MCP client state if supported."""
 
         if hasattr(self.client, "reset"):
             self.client.reset()
 
     def run(self, query: str) -> MultiAgentResult:
-        """Run multi-agent baseline on one user query."""
+        """Run the role-based multi-agent baseline on one user query."""
 
         orchestration_steps: list[MultiAgentStep] = []
 
-        parsed, worker, route_step = self.orchestrator.parse_and_route(query)
-        orchestration_steps.append(route_step)
+        parsed = self.orchestrator.parse(query)
+        plan_step = self.orchestrator.build_plan(parsed)
+        orchestration_steps.append(plan_step)
 
-        if worker == "high_tec_worker":
-            tool_results, worker_step = self.high_tec_agent.run(parsed)
-        elif worker == "compare_worker":
-            tool_results, worker_step = self.compare_agent.run(parsed)
-        elif worker == "stable_worker":
-            tool_results, worker_step = self.stable_agent.run(parsed)
-        elif worker == "report_worker":
-            tool_results, worker_step = self.report_agent.run(parsed)
-        else:
-            raise ValueError(f"Unknown worker selected by orchestrator: {worker!r}")
+        data_artifacts, data_step = self.data_agent.load_series_for_regions(parsed)
+        orchestration_steps.append(data_step)
 
-        orchestration_steps.append(worker_step)
-
-        answer, reporter_step = self.reporter_agent.format_answer(
-            parsed=parsed,
-            tool_results=tool_results,
+        math_artifacts, math_step = self.math_agent.compute_for_task(
+            parsed,
+            data_artifacts,
         )
-        orchestration_steps.append(reporter_step)
+        orchestration_steps.append(math_step)
+
+        analysis_artifacts, analysis_step = self.analysis_agent.analyze(
+            parsed,
+            data_artifacts,
+            math_artifacts,
+        )
+        orchestration_steps.append(analysis_step)
+
+        answer, report_step = self.report_agent.format_answer(
+            parsed,
+            data_artifacts,
+            math_artifacts,
+            analysis_artifacts,
+        )
+        orchestration_steps.append(report_step)
 
         return MultiAgentResult(
             answer=answer,
             parsed_task=parsed,
-            tool_results=tool_results,
+            tool_results={
+                "data": data_artifacts,
+                "math": math_artifacts,
+                "analysis": analysis_artifacts,
+            },
             trace=self.client.get_trace(),
             orchestration_steps=orchestration_steps,
         )
+
+
+def _regions_for_parsed(parsed: ParsedMultiAgentTask) -> list[str]:
+    """Return task regions in deterministic order."""
+
+    if parsed.region_ids:
+        return list(parsed.region_ids)
+
+    if parsed.region_id is not None:
+        return [parsed.region_id]
+
+    return []
+
+
+def _first_region(parsed: ParsedMultiAgentTask) -> str:
+    """Return the single primary region for one-region tasks."""
+
+    regions = _regions_for_parsed(parsed)
+    if not regions:
+        raise ValueError(f"Task {parsed.task_type!r} requires a region")
+    return regions[0]
+
+
+def _series_id_for_region(data_artifacts: dict[str, Any], region_id: str) -> str:
+    """Return loaded series_id for a region."""
+
+    try:
+        return str(data_artifacts["series_by_region"][region_id]["series_id"])
+    except KeyError as exc:
+        raise KeyError(f"Missing data artifact for region {region_id!r}") from exc
+
+
+def _report_include(include: list[str] | None) -> list[str]:
+    """Return normalized report include sections."""
+
+    selected = include or DEFAULT_REPORT_INCLUDE
+    allowed = set(DEFAULT_REPORT_INCLUDE)
+    return [section for section in dict.fromkeys(selected) if section in allowed]
 
 
 def _fmt_float(value: Any) -> str:
@@ -834,26 +1347,73 @@ def _fmt_float(value: Any) -> str:
     return f"{float(value):.3f}"
 
 
-def _extract_comparison_payload(tool_results: dict[str, Any]) -> dict[str, Any]:
-    """Extract comparison payload from current or legacy result shapes."""
+def _leader_finding(items: list[dict[str, Any]], *, metric: str) -> dict[str, Any]:
+    """Return the region with the maximum available metric value."""
 
-    if "comparison" in tool_results:
-        return tool_results["comparison"]
+    best_region = None
+    best_value = None
 
-    if "items" in tool_results:
-        return tool_results
+    for item in items:
+        metrics = item.get("metrics") or {}
+        value = metrics.get(metric)
+        if value is None:
+            continue
 
-    if "stats" in tool_results:
+        value_float = float(value)
+        if best_value is None or value_float > best_value:
+            best_value = value_float
+            best_region = item.get("region_id")
+
+    if best_region is None:
         return {
-            "items": [
-                {
-                    "stats_id": item.get("stats_id", ""),
-                    "series_id": item.get("series_id", ""),
-                    "region_id": item.get("region_id"),
-                    "metrics": item,
-                }
-                for item in tool_results["stats"]
-            ]
+            "type": "comparison_leader",
+            "metric": metric,
+            "region_id": None,
+            "value": None,
+            "text": f"No {metric} TEC value is available.",
         }
 
-    raise KeyError("Could not find comparison payload")
+    return {
+        "type": "comparison_leader",
+        "metric": metric,
+        "region_id": best_region,
+        "value": best_value,
+        "text": f"{best_region} has the highest {metric} TEC.",
+    }
+
+
+def _max_interval_value(intervals: list[dict[str, Any]], field_name: str) -> float | None:
+    """Return max numeric interval field value or None."""
+
+    values: list[float] = []
+    for item in intervals:
+        value = item.get(field_name)
+        if value is not None:
+            values.append(float(value))
+
+    if not values:
+        return None
+
+    return max(values)
+
+
+def _high_tec_artifacts_by_region(math_artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Return high-TEC artifacts from task or report math shapes."""
+
+    if "high_tec" in math_artifacts:
+        return math_artifacts.get("high_tec") or {}
+
+    report_inputs = math_artifacts.get("report_inputs") or {}
+    high = report_inputs.get("high_tec") or {}
+    return high.get("by_region") or {}
+
+
+def _stable_artifacts_by_region(math_artifacts: dict[str, Any]) -> dict[str, Any]:
+    """Return stable interval artifacts from task or report math shapes."""
+
+    if "stable_intervals" in math_artifacts:
+        return math_artifacts.get("stable_intervals") or {}
+
+    report_inputs = math_artifacts.get("report_inputs") or {}
+    stable = report_inputs.get("stable_intervals") or {}
+    return stable.get("by_region") or {}

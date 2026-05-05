@@ -23,7 +23,11 @@ if str(SRC_DIR) not in sys.path:
 
 from tec_agents.data.datasets import register_dataset
 from tec_agents.eval.gold_runner import GoldRunner
-from tec_agents.eval.task_set import build_smoke_tasks
+from tec_agents.eval.task_set import (
+    EvalTask,
+    build_smoke_tasks,
+    primitive_report_tool_sequence,
+)
 
 
 def build_tiny_dataset(path: Path) -> None:
@@ -68,6 +72,31 @@ def main() -> None:
     )
 
     tasks = build_smoke_tasks(dataset_ref="smoke")
+    tasks.append(
+        EvalTask(
+            task_id="smoke_report_europe_highlat_march_2024",
+            query=(
+                "Build a TEC report for midlat_europe and highlat_north "
+                "in March 2024"
+            ),
+            task_type="report",
+            dataset_ref="smoke",
+            region_id=None,
+            region_ids=("midlat_europe", "highlat_north"),
+            start="2024-03-01",
+            end="2024-04-01",
+            params={
+                "include": [
+                    "basic_stats",
+                    "high_tec",
+                    "stable_intervals",
+                ]
+            },
+            expected_tool_sequence=primitive_report_tool_sequence(2),
+            expected_worker="role_based_workflow",
+            description="Smoke primitive report task for GoldRunner.",
+        )
+    )
     runner = GoldRunner()
 
     results = runner.run_many(tasks)
@@ -95,6 +124,15 @@ def main() -> None:
                 print(f"regions: {result.result['region_ids']}")
                 stats = comparison.get("items") or comparison.get("stats") or []
                 print(f"n_stats: {len(stats)}")
+
+            if result.task_type == "report":
+                tool_sequence = [
+                    call["tool_name"]
+                    for call in result.trace["calls"]
+                ]
+                print(f"regions: {result.result['regions']}")
+                print(f"tool_sequence: {tool_sequence}")
+                assert "tec_build_report" not in tool_sequence
 
         print(f"trace calls: {result.trace['n_calls']}")
 

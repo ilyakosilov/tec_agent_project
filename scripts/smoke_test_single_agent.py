@@ -29,8 +29,8 @@ from tec_agents.mcp.server import build_local_mcp_server
 
 EXPECTED_COMPARE_SEQUENCE = [
     "tec_get_timeseries",
-    "tec_compute_series_stats",
     "tec_get_timeseries",
+    "tec_compute_series_stats",
     "tec_compute_series_stats",
     "tec_compare_stats",
 ]

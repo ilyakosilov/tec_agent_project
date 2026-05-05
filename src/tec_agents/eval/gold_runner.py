@@ -191,6 +191,7 @@ class GoldRunner:
             series_results.append(ts_result)
             step += 1
 
+        for ts_result in series_results:
             stats_result = self.executor.call(
                 "tec_compute_series_stats",
                 {
@@ -293,38 +294,177 @@ class GoldRunner:
         }
 
     def _run_report(self, task: EvalTask) -> dict[str, Any]:
-        """Compute reference result for a structured report task."""
+        """Compute reference result for a structured report task via primitives."""
 
         if not task.region_ids:
             raise ValueError(f"Task {task.task_id!r} requires region_ids")
 
-        params = task.params or {}
-        include = params.get(
-            "include",
-            ["basic_stats", "high_tec", "stable_intervals"],
-        )
+        include = _report_include_from_task(task)
+        metrics = _compare_metrics_from_task(task)
+        series_by_region: dict[str, dict[str, Any]] = {}
+        report_inputs: dict[str, Any] = {}
+        step = 1
 
-        report_result = self.executor.call(
-            "tec_build_report",
-            {
-                "dataset_ref": task.dataset_ref,
-                "regions": list(task.region_ids),
-                "start": task.start,
-                "end": task.end,
-                "include": include,
-            },
-            agent_name="gold_runner",
-            step=1,
-        )
+        for region_id in task.region_ids:
+            ts_result = self.executor.call(
+                "tec_get_timeseries",
+                {
+                    "dataset_ref": task.dataset_ref,
+                    "region_id": region_id,
+                    "start": task.start,
+                    "end": task.end,
+                },
+                agent_name="gold_runner",
+                step=step,
+            )
+            step += 1
+            series_by_region[region_id] = {
+                "series_id": ts_result["series_id"],
+                "tool_result": ts_result,
+                "metadata": ts_result.get("metadata"),
+            }
+
+        if "basic_stats" in include:
+            by_region: dict[str, dict[str, Any]] = {}
+            stats_ids: list[str] = []
+
+            for region_id in task.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                stats_result = self.executor.call(
+                    "tec_compute_series_stats",
+                    {
+                        "series_id": series_id,
+                        "metrics": metrics,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "stats_id": stats_result["stats_id"],
+                    "series_id": series_id,
+                    "stats": stats_result,
+                    "metrics": stats_result.get("metrics", {}),
+                }
+                stats_ids.append(stats_result["stats_id"])
+
+            comparison = None
+            if len(stats_ids) >= 2:
+                comparison = self.executor.call(
+                    "tec_compare_stats",
+                    {
+                        "stats_ids": stats_ids,
+                        "metrics": metrics,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+            report_inputs["basic_stats"] = {
+                "by_region": by_region,
+                "comparison": comparison,
+            }
+
+        if "high_tec" in include:
+            by_region = {}
+
+            for region_id in task.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                threshold_result = self.executor.call(
+                    "tec_compute_high_threshold",
+                    {
+                        "series_id": series_id,
+                        "method": "quantile",
+                        "q": task.q,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.executor.call(
+                    "tec_detect_high_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": threshold_result["threshold_id"],
+                        "min_duration_minutes": 0,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "threshold": threshold_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["high_tec"] = {"by_region": by_region}
+
+        if "stable_intervals" in include:
+            params = task.params or {}
+            window_minutes = int(params.get("window_minutes", 180))
+            q_delta = float(params.get("q_delta", 0.60))
+            q_std = float(params.get("q_std", 0.60))
+            by_region = {}
+
+            for region_id in task.region_ids:
+                series_id = series_by_region[region_id]["series_id"]
+                thresholds_result = self.executor.call(
+                    "tec_compute_stability_thresholds",
+                    {
+                        "series_id": series_id,
+                        "window_minutes": window_minutes,
+                        "method": "quantile",
+                        "q_delta": q_delta,
+                        "q_std": q_std,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+                intervals_result = self.executor.call(
+                    "tec_detect_stable_intervals",
+                    {
+                        "series_id": series_id,
+                        "threshold_id": thresholds_result["threshold_id"],
+                        "min_duration_minutes": window_minutes,
+                        "merge_gap_minutes": 60,
+                    },
+                    agent_name="gold_runner",
+                    step=step,
+                )
+                step += 1
+
+                by_region[region_id] = {
+                    "thresholds": thresholds_result,
+                    "intervals": intervals_result,
+                }
+
+            report_inputs["stable_intervals"] = {"by_region": by_region}
 
         return {
             "task_id": task.task_id,
             "task_type": task.task_type,
             "dataset_ref": task.dataset_ref,
             "regions": list(task.region_ids),
+            "region_ids": list(task.region_ids),
             "start": task.start,
             "end": task.end,
-            "report": report_result,
+            "data": {
+                "series_by_region": series_by_region,
+                "regions": list(task.region_ids),
+                "dataset_ref": task.dataset_ref,
+                "start": task.start,
+                "end": task.end,
+            },
+            "math": {
+                "report_inputs": report_inputs,
+            },
         }
 
 
@@ -349,3 +489,14 @@ def _compare_metrics_from_task(task: EvalTask) -> list[str]:
         return list(metrics)
 
     return ["mean", "median", "min", "max", "std", "p90", "p95"]
+
+
+def _report_include_from_task(task: EvalTask) -> list[str]:
+    """Return deterministic report sections from task params or defaults."""
+
+    params = task.params or {}
+    include = params.get("include")
+    if include:
+        return list(include)
+
+    return ["basic_stats", "high_tec", "stable_intervals"]
