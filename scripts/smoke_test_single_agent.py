@@ -127,6 +127,25 @@ def main() -> None:
     assert compare_sequence == EXPECTED_COMPARE_SEQUENCE
     assert compare_result.tool_results["comparison"]["pairwise_deltas"]
 
+    agent.reset()
+
+    report_query = (
+        "Build a TEC report for midlat_europe and highlat_north in March 2024"
+    )
+    report_result = agent.run(report_query)
+    report_sequence = [
+        call["tool_name"]
+        for call in report_result.trace["calls"]
+    ]
+
+    print("\nReport trace sequence:")
+    print(report_sequence)
+
+    assert report_result.parsed_task.task_type == "report"
+    assert "tec_build_report" not in report_sequence
+    assert report_sequence[:2] == ["tec_get_timeseries", "tec_get_timeseries"]
+    assert report_result.trace["n_calls"] == 13
+
     print("\nSingle-agent smoke test finished successfully.")
 
 

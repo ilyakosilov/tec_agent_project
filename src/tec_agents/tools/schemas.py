@@ -345,7 +345,7 @@ class FindStableIntervalsDirectInput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Comparison / report tools
+# Comparison tools
 # ---------------------------------------------------------------------------
 
 
@@ -376,45 +376,6 @@ class CompareRegionsOutput(BaseModel):
     start: str
     end: str
     stats: list[RegionStatsRecord]
-
-
-class BuildReportInput(BaseModel):
-    """Input schema for tec_build_report."""
-
-    dataset_ref: str = "default"
-    regions: list[RegionId] | None = None
-    region_ids: list[RegionId] | None = None
-    start: str
-    end: str
-    freq: str | None = None
-    include: list[Literal["basic_stats", "high_tec", "stable_intervals"]] | None = None
-    include_high_tec: bool | None = True
-    include_stability: bool | None = None
-    q_high: float = Field(default=0.9, ge=0.0, le=1.0)
-    window_minutes: int = Field(default=180, ge=1)
-    q_delta: float = Field(default=0.6, ge=0.0, le=1.0)
-    q_std: float = Field(default=0.6, ge=0.0, le=1.0)
-
-    @model_validator(mode="after")
-    def validate_regions(self) -> "BuildReportInput":
-        selected_regions = self.regions or self.region_ids or []
-        if not selected_regions:
-            raise ValueError("Build report task requires at least one region")
-        if len(selected_regions) != len(set(selected_regions)):
-            raise ValueError("Report regions must be unique")
-        return self
-
-
-class BuildReportOutput(BaseModel):
-    """Output schema for tec_build_report."""
-
-    report_id: str
-    dataset_ref: str
-    regions: list[RegionId]
-    start: str
-    end: str
-    region_ids: list[RegionId]
-    sections: dict[str, Any]
 
 
 # ---------------------------------------------------------------------------

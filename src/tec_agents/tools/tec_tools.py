@@ -15,10 +15,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from tec_agents.data.datasets import get_region_series, load_processed_dataset
+from tec_agents.data.datasets import get_region_series
 from tec_agents.tools.schemas import (
-    BuildReportInput,
-    BuildReportOutput,
     CompareRegionsInput,
     CompareRegionsOutput,
     CompareStatsInput,
@@ -79,7 +77,6 @@ class ToolStore:
     thresholds: dict[str, dict[str, Any]] = field(default_factory=dict)
     stats: dict[str, dict[str, Any]] = field(default_factory=dict)
     comparisons: dict[str, dict[str, Any]] = field(default_factory=dict)
-    reports: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 def _make_id(prefix: str, payload: Any) -> str:
@@ -614,206 +611,6 @@ def tec_compare_regions(
         end=args.end,
         stats=stats,
     )
-
-
-def tec_build_report(
-    args: BuildReportInput,
-    store: ToolStore,
-) -> BuildReportOutput:
-    """Build a structured deterministic report for one or more regions."""
-
-    sections: dict[str, Any] = {}
-    region_ids = _report_region_ids(args)
-    include = _report_include_sections(args)
-
-    if "basic_stats" in include:
-        compare_args = CompareRegionsInput(
-            dataset_ref=args.dataset_ref,
-            region_ids=region_ids,
-            start=args.start,
-            end=args.end,
-            freq=args.freq,
-        )
-        comparison = tec_compare_regions(compare_args, store)
-        sections["basic_stats"] = {
-            item.region_id: item.model_dump()
-            for item in comparison.stats
-        }
-
-    if "high_tec" in include:
-        high_sections: dict[str, Any] = {}
-
-        for region_id in region_ids:
-            ts_result = tec_get_timeseries(
-                GetTimeseriesInput(
-                    dataset_ref=args.dataset_ref,
-                    region_id=region_id,
-                    start=args.start,
-                    end=args.end,
-                    freq=args.freq,
-                ),
-                store,
-            )
-            threshold = tec_compute_high_threshold(
-                ComputeHighThresholdInput(
-                    series_id=ts_result.series_id,
-                    method="quantile",
-                    q=args.q_high,
-                ),
-                store,
-            )
-            intervals = tec_detect_high_intervals(
-                DetectHighIntervalsInput(
-                    series_id=ts_result.series_id,
-                    threshold_id=threshold.threshold_id,
-                ),
-                store,
-            )
-
-            interval_records = [item.model_dump() for item in intervals.intervals]
-            top_intervals = sorted(
-                interval_records,
-                key=lambda item: (
-                    item.get("peak_value") is not None,
-                    float(item.get("peak_value") or float("-inf")),
-                ),
-                reverse=True,
-            )[:5]
-            peak_values = [
-                float(item["peak_value"])
-                for item in interval_records
-                if item.get("peak_value") is not None
-            ]
-
-            high_sections[region_id] = {
-                "series_id": ts_result.series_id,
-                "threshold_id": threshold.threshold_id,
-                "threshold": threshold.value,
-                "threshold_value": threshold.value,
-                "q": threshold.q,
-                "n_intervals": intervals.n_intervals,
-                "global_peak_value": max(peak_values) if peak_values else None,
-                "top_intervals": top_intervals,
-            }
-
-        sections["high_tec"] = high_sections
-
-    if "stable_intervals" in include:
-        stable_sections: dict[str, Any] = {}
-
-        for region_id in region_ids:
-            ts_result = tec_get_timeseries(
-                GetTimeseriesInput(
-                    dataset_ref=args.dataset_ref,
-                    region_id=region_id,
-                    start=args.start,
-                    end=args.end,
-                    freq=args.freq,
-                ),
-                store,
-            )
-            thresholds = tec_compute_stability_thresholds(
-                ComputeStabilityThresholdsInput(
-                    series_id=ts_result.series_id,
-                    window_minutes=args.window_minutes,
-                    method="quantile",
-                    q_delta=args.q_delta,
-                    q_std=args.q_std,
-                ),
-                store,
-            )
-            intervals = tec_detect_stable_intervals(
-                DetectStableIntervalsInput(
-                    series_id=ts_result.series_id,
-                    threshold_id=thresholds.threshold_id,
-                    min_duration_minutes=args.window_minutes,
-                    merge_gap_minutes=60,
-                ),
-                store,
-            )
-
-            interval_records = [item.model_dump() for item in intervals.intervals]
-            top_intervals = sorted(
-                interval_records,
-                key=lambda item: (
-                    float(item.get("duration_minutes") or 0.0),
-                    item.get("start") or "",
-                ),
-                reverse=True,
-            )[:5]
-
-            stable_sections[region_id] = {
-                "series_id": ts_result.series_id,
-                "threshold_id": thresholds.threshold_id,
-                "window_minutes": thresholds.window_minutes,
-                "q_delta": thresholds.q_delta,
-                "q_std": thresholds.q_std,
-                "max_delta_threshold": thresholds.max_delta_threshold,
-                "rolling_std_threshold": thresholds.rolling_std_threshold,
-                "estimated_step_minutes": thresholds.estimated_step_minutes,
-                "window_points": thresholds.window_points,
-                "n_intervals": intervals.n_intervals,
-                "top_intervals": top_intervals,
-            }
-
-        sections["stable_intervals"] = stable_sections
-
-    report_id = _make_id(
-        "report",
-        {
-            "dataset_ref": args.dataset_ref,
-            "regions": region_ids,
-            "start": args.start,
-            "end": args.end,
-            "freq": args.freq,
-            "include": include,
-            "q_high": args.q_high,
-            "window_minutes": args.window_minutes,
-            "q_delta": args.q_delta,
-            "q_std": args.q_std,
-        },
-    )
-
-    output = BuildReportOutput(
-        report_id=report_id,
-        dataset_ref=args.dataset_ref,
-        regions=region_ids,  # type: ignore[arg-type]
-        start=args.start,
-        end=args.end,
-        region_ids=region_ids,  # type: ignore[arg-type]
-        sections=sections,
-    )
-
-    store.reports[report_id] = output.model_dump()
-
-    return output
-
-
-def _report_region_ids(args: BuildReportInput) -> list[str]:
-    """Return report regions from the current or backward-compatible input field."""
-
-    return list(args.regions or args.region_ids or [])
-
-
-def _report_include_sections(args: BuildReportInput) -> list[str]:
-    """Return normalized report section names."""
-
-    if args.include is not None:
-        return list(dict.fromkeys(args.include))
-
-    include = ["basic_stats"]
-
-    if args.include_high_tec is not False:
-        include.append("high_tec")
-
-    include_stability = args.include_stability
-    if include_stability is None:
-        include_stability = True
-
-    if include_stability:
-        include.append("stable_intervals")
-
-    return include
 
 
 def _get_series_or_raise(series_id: str, store: ToolStore) -> pd.Series:

@@ -62,6 +62,7 @@ def print_summary_table(reports: list[dict[str, Any]]) -> None:
                 "tool_seq_match": summary.get("tool_sequence_match_rate"),
                 "role_order": summary.get("role_agent_order_match_rate"),
                 "artifact_flow": summary.get("artifact_flow_valid_rate"),
+                "legacy_report_tool": summary.get("legacy_report_tool_used_rate"),
             }
         )
 
@@ -77,6 +78,7 @@ def print_summary_table(reports: list[dict[str, Any]]) -> None:
         "tool_seq_match",
         "role_order",
         "artifact_flow",
+        "legacy_report_tool",
     ]
 
     print("\nArchitecture summary")

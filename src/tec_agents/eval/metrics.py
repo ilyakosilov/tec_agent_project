@@ -624,6 +624,12 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
         if isinstance(result.metrics.get("required_role_agents_called"), bool)
     ]
 
+    legacy_report_tool_used_values = [
+        result.metrics.get("legacy_report_tool_used")
+        for result in results
+        if isinstance(result.metrics.get("legacy_report_tool_used"), bool)
+    ]
+
     return {
         "n_tasks": n,
         "n_success": n_success,
@@ -641,6 +647,7 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
         "required_role_agents_called_rate": _bool_rate(
             required_role_agents_called_values
         ),
+        "legacy_report_tool_used_rate": _bool_rate(legacy_report_tool_used_values),
     }
 
 
@@ -953,6 +960,7 @@ def _trace_metrics(
 
     tool_sequence = [str(call.get("tool_name")) for call in calls]
     expected_sequence = _expected_tool_sequence(task_type, task=task)
+    legacy_report_tool_used = "tec_build_report" in tool_sequence
 
     tool_call_count = len(calls)
     tool_error_count = sum(1 for call in calls if call.get("status") != "ok")
@@ -987,6 +995,8 @@ def _trace_metrics(
         "tool_sequence": tool_sequence,
         "expected_tool_sequence": expected_sequence,
         "tool_sequence_match": tool_sequence == expected_sequence,
+        "legacy_report_tool_used": legacy_report_tool_used,
+        "legacy_report_tool_absent": not legacy_report_tool_used,
         "unnecessary_tool_call_count": _unnecessary_tool_call_count(
             actual=tool_sequence,
             expected=expected_sequence,

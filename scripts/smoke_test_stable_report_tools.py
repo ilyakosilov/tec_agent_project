@@ -107,38 +107,82 @@ def main() -> None:
     assert "rolling_std_threshold" in thresholds
     assert intervals["n_intervals"] >= 1
 
-    report = executor.call(
-        "tec_build_report",
+    report_series = []
+    for region_id in ["midlat_europe", "highlat_north"]:
+        report_series.append(
+            executor.call(
+                "tec_get_timeseries",
+                {
+                    "dataset_ref": "smoke",
+                    "region_id": region_id,
+                    "start": "2024-03-01",
+                    "end": "2024-04-01",
+                },
+            )
+        )
+
+    report_stats_ids = []
+    for ts_item in report_series:
+        stats = executor.call(
+            "tec_compute_series_stats",
+            {
+                "series_id": ts_item["series_id"],
+            },
+        )
+        report_stats_ids.append(stats["stats_id"])
+
+    report_comparison = executor.call(
+        "tec_compare_stats",
         {
-            "dataset_ref": "smoke",
-            "regions": ["midlat_europe", "highlat_north"],
-            "start": "2024-03-01",
-            "end": "2024-04-01",
-            "include": ["basic_stats", "high_tec", "stable_intervals"],
+            "stats_ids": report_stats_ids,
         },
     )
+    assert len(report_comparison["items"]) == 2
 
-    assert set(report["sections"]) == {
-        "basic_stats",
-        "high_tec",
-        "stable_intervals",
-    }
+    for ts_item in report_series:
+        high_threshold = executor.call(
+            "tec_compute_high_threshold",
+            {
+                "series_id": ts_item["series_id"],
+                "method": "quantile",
+                "q": 0.9,
+            },
+        )
+        high_intervals = executor.call(
+            "tec_detect_high_intervals",
+            {
+                "series_id": ts_item["series_id"],
+                "threshold_id": high_threshold["threshold_id"],
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60,
+            },
+        )
+        assert "n_intervals" in high_intervals
+
+    for ts_item in report_series:
+        stable_thresholds = executor.call(
+            "tec_compute_stability_thresholds",
+            {
+                "series_id": ts_item["series_id"],
+                "window_minutes": 180,
+                "method": "quantile",
+                "q_delta": 0.60,
+                "q_std": 0.60,
+            },
+        )
+        stable_intervals = executor.call(
+            "tec_detect_stable_intervals",
+            {
+                "series_id": ts_item["series_id"],
+                "threshold_id": stable_thresholds["threshold_id"],
+                "min_duration_minutes": 180,
+                "merge_gap_minutes": 60,
+            },
+        )
+        assert "n_intervals" in stable_intervals
 
     server = build_local_mcp_server(run_id="smoke_stable_report_mcp")
     client = LocalMCPClient(server)
-
-    mcp_report = client.call_tool_result(
-        "tec_build_report",
-        {
-            "dataset_ref": "smoke",
-            "regions": ["midlat_europe", "highlat_north"],
-            "start": "2024-03-01",
-            "end": "2024-04-01",
-        },
-        agent_name="smoke_agent",
-        step=1,
-    )
-    assert "stable_intervals" in mcp_report["sections"]
 
     single_agent = RuleBasedSingleAgent(client=client, dataset_ref="smoke")
     single_agent.reset()

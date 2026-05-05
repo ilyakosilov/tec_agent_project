@@ -67,6 +67,9 @@ def main() -> None:
     executor = build_default_executor(run_id="smoke_test")
 
     print("Available tools:")
+    tool_names = [tool["name"] for tool in executor.list_tools()]
+    assert "tec_build_report" not in tool_names
+
     for tool in executor.list_tools():
         print(f"  - {tool['name']}")
 

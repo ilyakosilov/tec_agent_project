@@ -22,8 +22,6 @@ from pydantic import BaseModel
 
 from tec_agents.tools import tec_tools
 from tec_agents.tools.schemas import (
-    BuildReportInput,
-    BuildReportOutput,
     CompareRegionsInput,
     CompareRegionsOutput,
     CompareStatsInput,
@@ -261,17 +259,6 @@ def build_tool_registry() -> ToolRegistry:
                 input_model=CompareRegionsInput,
                 output_model=CompareRegionsOutput,
                 func=tec_tools.tec_compare_regions,
-            ),
-            ToolSpec(
-                name="tec_build_report",
-                description=(
-                    "Build a compact deterministic TEC report for one or more regions, "
-                    "including basic statistics, high-TEC intervals, and stable "
-                    "interval summaries as structured JSON."
-                ),
-                input_model=BuildReportInput,
-                output_model=BuildReportOutput,
-                func=tec_tools.tec_build_report,
             ),
         ]
     )

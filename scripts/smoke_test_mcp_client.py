@@ -68,7 +68,10 @@ def main() -> None:
     client = LocalMCPClient(server)
 
     print("Available MCP-like tools:")
-    for name in client.list_tool_names():
+    tool_names = client.list_tool_names()
+    assert "tec_build_report" not in tool_names
+
+    for name in tool_names:
         print(f"  - {name}")
 
     print("\nCalling tec_get_timeseries through MCP-like client...")
