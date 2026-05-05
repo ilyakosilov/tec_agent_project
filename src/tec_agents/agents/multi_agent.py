@@ -24,10 +24,24 @@ from typing import Any
 
 from dateutil.relativedelta import relativedelta
 
+from tec_agents.agents.protocol import (
+    AgentResponse,
+    AgentStatus,
+    RequestedNextAction,
+    StepRecoveryDecision,
+    agent_final,
+    agent_invalid_input,
+    agent_missing_artifacts,
+    agent_ok,
+    agent_partial,
+    agent_tool_error,
+    required_artifacts_for_task,
+)
 from tec_agents.data.regions import list_region_ids
 from tec_agents.mcp.client import LocalMCPClient
 
 
+MAX_AGENT_RETRIES = 2
 MONTHS: dict[str, int] = {
     "january": 1,
     "jan": 1,
@@ -91,6 +105,14 @@ class MultiAgentStep:
     node: str
     action: str
     details: dict[str, Any] = field(default_factory=dict)
+    status: str = "ok"
+    missing_artifacts: list[str] = field(default_factory=list)
+    requested_next_action: dict[str, Any] | None = None
+    can_continue: bool = True
+    requires_retry: bool = False
+    attempt: int = 1
+    max_attempts: int = MAX_AGENT_RETRIES
+    decision: str | None = None
 
 
 @dataclass
@@ -225,6 +247,111 @@ class RuleBasedOrchestrator:
             node="orchestrator",
             action="build_plan",
             details=details,
+        )
+
+    def decide_next_action(
+        self,
+        response: AgentResponse,
+        context: dict[str, Any] | None = None,
+    ) -> StepRecoveryDecision:
+        """Decide how the workflow should proceed after an agent response."""
+
+        context = context or {}
+        attempt = int(context.get("attempt", response.attempt))
+        max_attempts = int(context.get("max_attempts", response.max_attempts))
+
+        if response.status == AgentStatus.FINAL:
+            return StepRecoveryDecision(
+                decision="continue",
+                target_agent=response.agent,
+                reason="Final response produced.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        if response.status == AgentStatus.OK:
+            return StepRecoveryDecision(
+                decision="continue",
+                target_agent=response.agent,
+                reason="Stage completed.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        if response.status == AgentStatus.PARTIAL:
+            if response.can_continue:
+                return StepRecoveryDecision(
+                    decision="continue_partial",
+                    target_agent=response.agent,
+                    reason=response.message or "Partial artifacts can continue.",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+            return StepRecoveryDecision(
+                decision="fail",
+                target_agent=response.agent,
+                reason=response.message or "Partial artifacts cannot continue.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        if response.status == AgentStatus.MISSING_ARTIFACTS:
+            if attempt >= max_attempts:
+                return StepRecoveryDecision(
+                    decision="fail",
+                    target_agent=response.agent,
+                    reason="Maximum recovery attempts exceeded.",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+            if response.requested_next_action is not None:
+                return StepRecoveryDecision(
+                    decision="call_requested_agent",
+                    target_agent=response.requested_next_action.target_agent,
+                    reason=response.requested_next_action.reason,
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+            return StepRecoveryDecision(
+                decision="fail",
+                target_agent=response.agent,
+                reason=response.message or "Missing required artifacts.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        if response.status == AgentStatus.TOOL_ERROR:
+            if response.requires_retry and attempt < max_attempts:
+                return StepRecoveryDecision(
+                    decision="retry_same_agent",
+                    target_agent=response.agent,
+                    reason=response.message or "Retryable tool error.",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                )
+            return StepRecoveryDecision(
+                decision="fail",
+                target_agent=response.agent,
+                reason=response.message or "Tool error could not be recovered.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        if response.status == AgentStatus.INVALID_INPUT:
+            return StepRecoveryDecision(
+                decision="fail",
+                target_agent=response.agent,
+                reason=response.message or "Invalid input.",
+                attempt=attempt,
+                max_attempts=max_attempts,
+            )
+
+        return StepRecoveryDecision(
+            decision="fail",
+            target_agent=response.agent,
+            reason=f"Unhandled agent status: {response.status.value}",
+            attempt=attempt,
+            max_attempts=max_attempts,
         )
 
     def parse_and_route(
@@ -402,17 +529,25 @@ class DataAgent:
     def load_series_for_regions(
         self,
         parsed: ParsedMultiAgentTask,
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Load all required time series before any math stage runs."""
 
         regions = _regions_for_parsed(parsed)
         if not regions:
-            raise ValueError(f"Task {parsed.task_type!r} requires at least one region")
+            return agent_invalid_input(
+                agent=self.agent_name,
+                message="No regions were provided.",
+                missing_artifacts=["parsed.region_ids"],
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
 
         series_by_region: dict[str, dict[str, Any]] = {}
 
         for step, region_id in enumerate(regions, start=1):
-            ts_result = self.client.call_tool_result(
+            response = self.client.call_tool(
                 "tec_get_timeseries",
                 {
                     "dataset_ref": parsed.dataset_ref,
@@ -423,7 +558,30 @@ class DataAgent:
                 agent_name=self.agent_name,
                 step=step,
             )
+            if response.status != "ok" or response.result is None:
+                missing = [f"data.series_by_region.{region_id}"]
+                return agent_tool_error(
+                    agent=self.agent_name,
+                    message=f"tec_get_timeseries failed for {region_id}.",
+                    artifacts={
+                        "series_by_region": series_by_region,
+                        "regions": regions,
+                    },
+                    missing_artifacts=missing,
+                    requested_next_action=RequestedNextAction(
+                        target_agent="data_agent",
+                        task="retry_load_series",
+                        reason="tec_get_timeseries failed",
+                        required_artifacts=missing,
+                        params={"regions": [region_id]},
+                    ),
+                    can_continue=False,
+                    requires_retry=True,
+                    attempt=attempt,
+                    max_attempts=MAX_AGENT_RETRIES,
+                )
 
+            ts_result = response.result
             series_by_region[region_id] = {
                 "series_id": ts_result["series_id"],
                 "tool_result": ts_result,
@@ -438,20 +596,13 @@ class DataAgent:
             "end": parsed.end,
         }
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="load_series",
-            details={
-                "regions": regions,
-                "series_ids": {
-                    region_id: item["series_id"]
-                    for region_id, item in series_by_region.items()
-                },
-                "n_series": len(series_by_region),
-            },
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message=f"Loaded {len(series_by_region)} series.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return artifacts, step
 
 
 class MathAgent:
@@ -474,34 +625,50 @@ class MathAgent:
         self,
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Dispatch task-specific math while keeping data access separate."""
 
         if parsed.task_type == "high_tec":
-            return self._compute_high_tec(parsed, data_artifacts)
+            return self._compute_high_tec(parsed, data_artifacts, attempt=attempt)
 
         if parsed.task_type == "stable_intervals":
-            return self._compute_stable_intervals(parsed, data_artifacts)
+            return self._compute_stable_intervals(parsed, data_artifacts, attempt=attempt)
 
         if parsed.task_type == "compare_regions":
-            return self._compute_compare_regions(parsed, data_artifacts)
+            return self._compute_compare_regions(parsed, data_artifacts, attempt=attempt)
 
         if parsed.task_type == "report":
-            return self._compute_report_inputs(parsed, data_artifacts)
+            return self._compute_report_inputs(parsed, data_artifacts, attempt=attempt)
 
-        raise ValueError(f"Unsupported task type for MathAgent: {parsed.task_type!r}")
+        return agent_invalid_input(
+            agent=self.agent_name,
+            message=f"Unsupported task type for MathAgent: {parsed.task_type!r}",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
+        )
 
     def _compute_high_tec(
         self,
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Compute high-TEC thresholds and intervals for one region."""
 
         region_id = _first_region(parsed)
-        series_id = _series_id_for_region(data_artifacts, region_id)
+        try:
+            series_id = _series_id_for_region(data_artifacts, region_id)
+        except KeyError:
+            return _math_missing_series_response(
+                self.agent_name,
+                region_id,
+                attempt=attempt,
+            )
 
-        threshold_result = self.client.call_tool_result(
+        threshold_response = self.client.call_tool(
             "tec_compute_high_threshold",
             {
                 "series_id": series_id,
@@ -511,8 +678,17 @@ class MathAgent:
             agent_name=self.agent_name,
             step=1,
         )
+        if threshold_response.status != "ok" or threshold_response.result is None:
+            return _math_tool_error_response(
+                self.agent_name,
+                tool_name="tec_compute_high_threshold",
+                region_id=region_id,
+                missing_artifact=f"math.high_tec.{region_id}.threshold",
+                attempt=attempt,
+            )
+        threshold_result = threshold_response.result
 
-        intervals_result = self.client.call_tool_result(
+        intervals_response = self.client.call_tool(
             "tec_detect_high_intervals",
             {
                 "series_id": series_id,
@@ -523,6 +699,15 @@ class MathAgent:
             agent_name=self.agent_name,
             step=2,
         )
+        if intervals_response.status != "ok" or intervals_response.result is None:
+            return _math_tool_error_response(
+                self.agent_name,
+                tool_name="tec_detect_high_intervals",
+                region_id=region_id,
+                missing_artifact=f"math.high_tec.{region_id}.intervals",
+                attempt=attempt,
+            )
+        intervals_result = intervals_response.result
 
         artifacts = {
             "high_tec": {
@@ -533,29 +718,34 @@ class MathAgent:
             }
         }
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="compute_high_tec",
-            details={
-                "regions": [region_id],
-                "n_thresholds": 1,
-                "n_interval_results": 1,
-            },
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message="Computed high TEC artifacts.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return artifacts, step
 
     def _compute_stable_intervals(
         self,
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Compute stable interval thresholds and detections for one region."""
 
         region_id = _first_region(parsed)
-        series_id = _series_id_for_region(data_artifacts, region_id)
+        try:
+            series_id = _series_id_for_region(data_artifacts, region_id)
+        except KeyError:
+            return _math_missing_series_response(
+                self.agent_name,
+                region_id,
+                attempt=attempt,
+            )
 
-        thresholds_result = self.client.call_tool_result(
+        thresholds_response = self.client.call_tool(
             "tec_compute_stability_thresholds",
             {
                 "series_id": series_id,
@@ -567,8 +757,17 @@ class MathAgent:
             agent_name=self.agent_name,
             step=1,
         )
+        if thresholds_response.status != "ok" or thresholds_response.result is None:
+            return _math_tool_error_response(
+                self.agent_name,
+                tool_name="tec_compute_stability_thresholds",
+                region_id=region_id,
+                missing_artifact=f"math.stable_intervals.{region_id}.thresholds",
+                attempt=attempt,
+            )
+        thresholds_result = thresholds_response.result
 
-        intervals_result = self.client.call_tool_result(
+        intervals_response = self.client.call_tool(
             "tec_detect_stable_intervals",
             {
                 "series_id": series_id,
@@ -579,6 +778,15 @@ class MathAgent:
             agent_name=self.agent_name,
             step=2,
         )
+        if intervals_response.status != "ok" or intervals_response.result is None:
+            return _math_tool_error_response(
+                self.agent_name,
+                tool_name="tec_detect_stable_intervals",
+                region_id=region_id,
+                missing_artifact=f"math.stable_intervals.{region_id}.intervals",
+                attempt=attempt,
+            )
+        intervals_result = intervals_response.result
 
         artifacts = {
             "stable_intervals": {
@@ -589,35 +797,47 @@ class MathAgent:
             }
         }
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="compute_stable_intervals",
-            details={
-                "regions": [region_id],
-                "n_thresholds": 1,
-                "n_interval_results": 1,
-            },
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message="Computed stable interval artifacts.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return artifacts, step
 
     def _compute_compare_regions(
         self,
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Compute all region stats first, then compare the stats handles."""
 
         regions = _regions_for_parsed(parsed)
         if len(regions) < 2:
-            raise ValueError("Comparison task requires at least two region_ids")
+            return agent_invalid_input(
+                agent=self.agent_name,
+                message="Comparison task requires at least two region_ids.",
+                missing_artifacts=["parsed.region_ids"],
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
 
         stats_by_region: dict[str, dict[str, Any]] = {}
         stats_ids: list[str] = []
 
         for step, region_id in enumerate(regions, start=1):
-            series_id = _series_id_for_region(data_artifacts, region_id)
-            stats_result = self.client.call_tool_result(
+            try:
+                series_id = _series_id_for_region(data_artifacts, region_id)
+            except KeyError:
+                return _math_missing_series_response(
+                    self.agent_name,
+                    region_id,
+                    attempt=attempt,
+                )
+
+            stats_response = self.client.call_tool(
                 "tec_compute_series_stats",
                 {
                     "series_id": series_id,
@@ -626,6 +846,15 @@ class MathAgent:
                 agent_name=self.agent_name,
                 step=step,
             )
+            if stats_response.status != "ok" or stats_response.result is None:
+                return _math_tool_error_response(
+                    self.agent_name,
+                    tool_name="tec_compute_series_stats",
+                    region_id=region_id,
+                    missing_artifact=f"math.stats_by_region.{region_id}",
+                    attempt=attempt,
+                )
+            stats_result = stats_response.result
 
             stats_by_region[region_id] = {
                 "stats_id": stats_result["stats_id"],
@@ -635,7 +864,7 @@ class MathAgent:
             }
             stats_ids.append(stats_result["stats_id"])
 
-        comparison_result = self.client.call_tool_result(
+        comparison_response = self.client.call_tool(
             "tec_compare_stats",
             {
                 "stats_ids": stats_ids,
@@ -644,52 +873,66 @@ class MathAgent:
             agent_name=self.agent_name,
             step=len(regions) + 1,
         )
+        if comparison_response.status != "ok" or comparison_response.result is None:
+            return _math_tool_error_response(
+                self.agent_name,
+                tool_name="tec_compare_stats",
+                region_id=",".join(regions),
+                missing_artifact="math.comparison",
+                attempt=attempt,
+            )
+        comparison_result = comparison_response.result
 
         artifacts = {
             "stats_by_region": stats_by_region,
             "comparison": comparison_result,
         }
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="compute_region_comparison",
-            details={
-                "regions": regions,
-                "stats_ids": {
-                    region_id: item["stats_id"]
-                    for region_id, item in stats_by_region.items()
-                },
-                "comparison_id": comparison_result["comparison_id"],
-                "n_regions": len(regions),
-            },
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message="Computed region comparison artifacts.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return artifacts, step
 
     def _compute_report_inputs(
         self,
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Compute primitive artifacts needed for a structured TEC report."""
 
         regions = _regions_for_parsed(parsed)
+        if not regions:
+            return agent_invalid_input(
+                agent=self.agent_name,
+                message="Report task requires at least one region.",
+                missing_artifacts=["parsed.region_ids"],
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
+
         include = _report_include(parsed.include)
         report_inputs: dict[str, Any] = {}
         step = 1
-
-        n_stats = 0
-        has_comparison = False
-        n_high_results = 0
-        n_stable_results = 0
 
         if "basic_stats" in include:
             by_region: dict[str, dict[str, Any]] = {}
             stats_ids: list[str] = []
 
             for region_id in regions:
-                series_id = _series_id_for_region(data_artifacts, region_id)
-                stats_result = self.client.call_tool_result(
+                try:
+                    series_id = _series_id_for_region(data_artifacts, region_id)
+                except KeyError:
+                    return _math_missing_series_response(
+                        self.agent_name,
+                        region_id,
+                        attempt=attempt,
+                    )
+                stats_response = self.client.call_tool(
                     "tec_compute_series_stats",
                     {
                         "series_id": series_id,
@@ -699,7 +942,16 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
+                if stats_response.status != "ok" or stats_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_compute_series_stats",
+                        region_id=region_id,
+                        missing_artifact=f"math.report_inputs.basic_stats.{region_id}",
+                        attempt=attempt,
+                    )
 
+                stats_result = stats_response.result
                 by_region[region_id] = {
                     "stats_id": stats_result["stats_id"],
                     "series_id": series_id,
@@ -710,7 +962,7 @@ class MathAgent:
 
             comparison = None
             if len(stats_ids) >= 2:
-                comparison = self.client.call_tool_result(
+                comparison_response = self.client.call_tool(
                     "tec_compare_stats",
                     {
                         "stats_ids": stats_ids,
@@ -720,20 +972,34 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
-                has_comparison = True
+                if comparison_response.status != "ok" or comparison_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_compare_stats",
+                        region_id=",".join(regions),
+                        missing_artifact="math.report_inputs.basic_stats.comparison",
+                        attempt=attempt,
+                    )
+                comparison = comparison_response.result
 
             report_inputs["basic_stats"] = {
                 "by_region": by_region,
                 "comparison": comparison,
             }
-            n_stats = len(by_region)
 
         if "high_tec" in include:
             by_region = {}
 
             for region_id in regions:
-                series_id = _series_id_for_region(data_artifacts, region_id)
-                threshold_result = self.client.call_tool_result(
+                try:
+                    series_id = _series_id_for_region(data_artifacts, region_id)
+                except KeyError:
+                    return _math_missing_series_response(
+                        self.agent_name,
+                        region_id,
+                        attempt=attempt,
+                    )
+                threshold_response = self.client.call_tool(
                     "tec_compute_high_threshold",
                     {
                         "series_id": series_id,
@@ -744,8 +1010,17 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
+                if threshold_response.status != "ok" or threshold_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_compute_high_threshold",
+                        region_id=region_id,
+                        missing_artifact=f"math.report_inputs.high_tec.{region_id}.threshold",
+                        attempt=attempt,
+                    )
+                threshold_result = threshold_response.result
 
-                intervals_result = self.client.call_tool_result(
+                intervals_response = self.client.call_tool(
                     "tec_detect_high_intervals",
                     {
                         "series_id": series_id,
@@ -757,6 +1032,15 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
+                if intervals_response.status != "ok" or intervals_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_detect_high_intervals",
+                        region_id=region_id,
+                        missing_artifact=f"math.report_inputs.high_tec.{region_id}.intervals",
+                        attempt=attempt,
+                    )
+                intervals_result = intervals_response.result
 
                 by_region[region_id] = {
                     "threshold": threshold_result,
@@ -764,14 +1048,20 @@ class MathAgent:
                 }
 
             report_inputs["high_tec"] = {"by_region": by_region}
-            n_high_results = len(by_region)
 
         if "stable_intervals" in include:
             by_region = {}
 
             for region_id in regions:
-                series_id = _series_id_for_region(data_artifacts, region_id)
-                thresholds_result = self.client.call_tool_result(
+                try:
+                    series_id = _series_id_for_region(data_artifacts, region_id)
+                except KeyError:
+                    return _math_missing_series_response(
+                        self.agent_name,
+                        region_id,
+                        attempt=attempt,
+                    )
+                thresholds_response = self.client.call_tool(
                     "tec_compute_stability_thresholds",
                     {
                         "series_id": series_id,
@@ -784,8 +1074,17 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
+                if thresholds_response.status != "ok" or thresholds_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_compute_stability_thresholds",
+                        region_id=region_id,
+                        missing_artifact=f"math.report_inputs.stable_intervals.{region_id}.thresholds",
+                        attempt=attempt,
+                    )
+                thresholds_result = thresholds_response.result
 
-                intervals_result = self.client.call_tool_result(
+                intervals_response = self.client.call_tool(
                     "tec_detect_stable_intervals",
                     {
                         "series_id": series_id,
@@ -797,6 +1096,15 @@ class MathAgent:
                     step=step,
                 )
                 step += 1
+                if intervals_response.status != "ok" or intervals_response.result is None:
+                    return _math_tool_error_response(
+                        self.agent_name,
+                        tool_name="tec_detect_stable_intervals",
+                        region_id=region_id,
+                        missing_artifact=f"math.report_inputs.stable_intervals.{region_id}.intervals",
+                        attempt=attempt,
+                    )
+                intervals_result = intervals_response.result
 
                 by_region[region_id] = {
                     "thresholds": thresholds_result,
@@ -804,24 +1112,16 @@ class MathAgent:
                 }
 
             report_inputs["stable_intervals"] = {"by_region": by_region}
-            n_stable_results = len(by_region)
 
         artifacts = {"report_inputs": report_inputs}
 
-        math_step = MultiAgentStep(
-            node=self.agent_name,
-            action="compute_report_inputs",
-            details={
-                "regions": regions,
-                "include": include,
-                "n_stats": n_stats,
-                "has_comparison": has_comparison,
-                "n_high_tec_results": n_high_results,
-                "n_stable_results": n_stable_results,
-            },
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message="Computed report input artifacts.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return artifacts, math_step
 
 
 class AnalysisAgent:
@@ -837,8 +1137,25 @@ class AnalysisAgent:
         parsed: ParsedMultiAgentTask,
         data_artifacts: dict[str, Any],
         math_artifacts: dict[str, Any],
-    ) -> tuple[dict[str, Any], MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Create structured findings without calling computational tools."""
+
+        if not math_artifacts:
+            return agent_missing_artifacts(
+                agent=self.agent_name,
+                missing_artifacts=["math"],
+                requested_next_action=RequestedNextAction(
+                    target_agent="math_agent",
+                    task="compute_missing_math_artifacts",
+                    reason="AnalysisAgent needs math artifacts",
+                    required_artifacts=["math"],
+                ),
+                message="Cannot analyze without math artifacts.",
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
 
         findings: list[dict[str, Any]] = []
 
@@ -867,23 +1184,33 @@ class AnalysisAgent:
             "summary": summary,
         }
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="analyze_results",
-            details={
-                "task_type": parsed.task_type,
-                "n_findings": len(findings),
-                "finding_types": sorted(
-                    {
-                        str(finding.get("type"))
-                        for finding in findings
-                        if finding.get("type") is not None
-                    }
-                ),
-            },
-        )
+        required = required_artifacts_for_task(parsed.task_type, parsed.include)
+        missing_optional = [
+            artifact
+            for artifact in required.get("optional", [])
+            if not _artifact_path_exists(
+                {"data": data_artifacts, "math": math_artifacts, "analysis": artifacts},
+                artifact,
+            )
+        ]
 
-        return artifacts, step
+        if missing_optional:
+            return agent_partial(
+                agent=self.agent_name,
+                artifacts=artifacts,
+                missing_artifacts=missing_optional,
+                message="Some optional sections missing; findings generated from available artifacts.",
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
+
+        return agent_ok(
+            agent=self.agent_name,
+            artifacts=artifacts,
+            message=f"Generated {len(findings)} findings.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
+        )
 
     def _analyze_comparison(
         self,
@@ -1062,8 +1389,46 @@ class ReportAgent:
         data_artifacts: dict[str, Any],
         math_artifacts: dict[str, Any],
         analysis_artifacts: dict[str, Any],
-    ) -> tuple[str, MultiAgentStep]:
+        *,
+        attempt: int = 1,
+    ) -> AgentResponse:
         """Format a deterministic final answer from existing artifacts."""
+
+        context = {
+            "data": data_artifacts,
+            "math": math_artifacts,
+            "analysis": analysis_artifacts,
+        }
+        artifact_spec = required_artifacts_for_task(parsed.task_type, parsed.include)
+        missing_required = [
+            path
+            for path in artifact_spec.get("required", [])
+            if not _artifact_path_exists(context, path)
+        ]
+        if missing_required:
+            target_agent = _target_agent_for_artifact(missing_required[0])
+            return agent_missing_artifacts(
+                agent=self.agent_name,
+                missing_artifacts=missing_required,
+                requested_next_action=RequestedNextAction(
+                    target_agent=target_agent,
+                    task="provide_missing_artifacts",
+                    reason="Cannot produce grounded report without required artifacts",
+                    required_artifacts=missing_required,
+                ),
+                message=(
+                    "Cannot produce grounded report because required artifacts "
+                    "are missing."
+                ),
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
+
+        missing_optional = [
+            path
+            for path in artifact_spec.get("optional", [])
+            if not _artifact_path_exists(context, path)
+        ]
 
         if parsed.task_type == "high_tec":
             answer = self._format_high_tec_answer(parsed, math_artifacts)
@@ -1079,18 +1444,30 @@ class ReportAgent:
                 analysis_artifacts=analysis_artifacts,
             )
         else:
-            raise ValueError(f"Unsupported task type for ReportAgent: {parsed.task_type!r}")
+            return agent_invalid_input(
+                agent=self.agent_name,
+                message=f"Unsupported task type for ReportAgent: {parsed.task_type!r}",
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
 
-        step = MultiAgentStep(
-            node=self.agent_name,
-            action="format_final_answer",
-            details={
-                "task_type": parsed.task_type,
-                "answer_length": len(answer),
-            },
+        if missing_optional:
+            return agent_partial(
+                agent=self.agent_name,
+                artifacts={"answer": f"[PARTIAL] {answer}"},
+                missing_artifacts=missing_optional,
+                message="Final answer produced without optional artifacts.",
+                attempt=attempt,
+                max_attempts=MAX_AGENT_RETRIES,
+            )
+
+        return agent_final(
+            agent=self.agent_name,
+            artifacts={"answer": answer},
+            message="Final answer formatted.",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
         )
-
-        return answer, step
 
     def _format_high_tec_answer(
         self,
@@ -1264,29 +1641,58 @@ class RuleBasedMultiAgent:
         plan_step = self.orchestrator.build_plan(parsed)
         orchestration_steps.append(plan_step)
 
-        data_artifacts, data_step = self.data_agent.load_series_for_regions(parsed)
-        orchestration_steps.append(data_step)
+        data_artifacts: dict[str, Any] = {}
+        math_artifacts: dict[str, Any] = {}
+        analysis_artifacts: dict[str, Any] = {}
 
-        math_artifacts, math_step = self.math_agent.compute_for_task(
-            parsed,
-            data_artifacts,
+        data_response = self._execute_stage(
+            stage="data",
+            parsed=parsed,
+            data_artifacts=data_artifacts,
+            math_artifacts=math_artifacts,
+            analysis_artifacts=analysis_artifacts,
+            orchestration_steps=orchestration_steps,
         )
-        orchestration_steps.append(math_step)
+        if not _response_can_advance(data_response):
+            return self._failure_result(parsed, data_response, orchestration_steps)
+        data_artifacts.update(data_response.artifacts)
 
-        analysis_artifacts, analysis_step = self.analysis_agent.analyze(
-            parsed,
-            data_artifacts,
-            math_artifacts,
+        math_response = self._execute_stage(
+            stage="math",
+            parsed=parsed,
+            data_artifacts=data_artifacts,
+            math_artifacts=math_artifacts,
+            analysis_artifacts=analysis_artifacts,
+            orchestration_steps=orchestration_steps,
         )
-        orchestration_steps.append(analysis_step)
+        if not _response_can_advance(math_response):
+            return self._failure_result(parsed, math_response, orchestration_steps)
+        math_artifacts.update(math_response.artifacts)
 
-        answer, report_step = self.report_agent.format_answer(
-            parsed,
-            data_artifacts,
-            math_artifacts,
-            analysis_artifacts,
+        analysis_response = self._execute_stage(
+            stage="analysis",
+            parsed=parsed,
+            data_artifacts=data_artifacts,
+            math_artifacts=math_artifacts,
+            analysis_artifacts=analysis_artifacts,
+            orchestration_steps=orchestration_steps,
         )
-        orchestration_steps.append(report_step)
+        if not _response_can_advance(analysis_response):
+            return self._failure_result(parsed, analysis_response, orchestration_steps)
+        analysis_artifacts.update(analysis_response.artifacts)
+
+        report_response = self._execute_stage(
+            stage="report",
+            parsed=parsed,
+            data_artifacts=data_artifacts,
+            math_artifacts=math_artifacts,
+            analysis_artifacts=analysis_artifacts,
+            orchestration_steps=orchestration_steps,
+        )
+        if not _response_can_advance(report_response):
+            return self._failure_result(parsed, report_response, orchestration_steps)
+
+        answer = str(report_response.artifacts.get("answer", ""))
 
         return MultiAgentResult(
             answer=answer,
@@ -1295,6 +1701,197 @@ class RuleBasedMultiAgent:
                 "data": data_artifacts,
                 "math": math_artifacts,
                 "analysis": analysis_artifacts,
+            },
+            trace=self.client.get_trace(),
+            orchestration_steps=orchestration_steps,
+        )
+
+    def _execute_stage(
+        self,
+        *,
+        stage: str,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        analysis_artifacts: dict[str, Any],
+        orchestration_steps: list[MultiAgentStep],
+    ) -> AgentResponse:
+        """Execute one workflow stage with bounded recovery decisions."""
+
+        for attempt in range(1, MAX_AGENT_RETRIES + 1):
+            response = self._call_stage(
+                stage=stage,
+                parsed=parsed,
+                data_artifacts=data_artifacts,
+                math_artifacts=math_artifacts,
+                analysis_artifacts=analysis_artifacts,
+                attempt=attempt,
+            )
+            decision = self.orchestrator.decide_next_action(
+                response,
+                {
+                    "stage": stage,
+                    "attempt": attempt,
+                    "max_attempts": MAX_AGENT_RETRIES,
+                },
+            )
+            orchestration_steps.append(
+                _step_from_response(
+                    response=response,
+                    action=_stage_action(stage, parsed.task_type),
+                    details=_stage_details(stage, response, parsed),
+                    decision=decision,
+                )
+            )
+
+            if decision.decision in {"continue", "continue_partial"}:
+                return response
+
+            if decision.decision == "retry_same_agent":
+                continue
+
+            if decision.decision == "call_requested_agent":
+                recovery_response = self._call_requested_agent(
+                    response=response,
+                    parsed=parsed,
+                    data_artifacts=data_artifacts,
+                    math_artifacts=math_artifacts,
+                    analysis_artifacts=analysis_artifacts,
+                    attempt=attempt + 1,
+                )
+                recovery_decision = self.orchestrator.decide_next_action(
+                    recovery_response,
+                    {
+                        "stage": "recovery",
+                        "attempt": attempt + 1,
+                        "max_attempts": MAX_AGENT_RETRIES,
+                    },
+                )
+                orchestration_steps.append(
+                    _step_from_response(
+                        response=recovery_response,
+                        action="recovery_action",
+                        details={"requested_by": response.agent},
+                        decision=recovery_decision,
+                    )
+                )
+                if _response_can_advance(recovery_response):
+                    _merge_stage_artifacts(
+                        recovery_response,
+                        data_artifacts=data_artifacts,
+                        math_artifacts=math_artifacts,
+                        analysis_artifacts=analysis_artifacts,
+                    )
+                    continue
+                return response
+
+            return response
+
+        return response
+
+    def _call_stage(
+        self,
+        *,
+        stage: str,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        analysis_artifacts: dict[str, Any],
+        attempt: int,
+    ) -> AgentResponse:
+        """Call the role agent for a workflow stage."""
+
+        if stage == "data":
+            return self.data_agent.load_series_for_regions(parsed, attempt=attempt)
+        if stage == "math":
+            return self.math_agent.compute_for_task(
+                parsed,
+                data_artifacts,
+                attempt=attempt,
+            )
+        if stage == "analysis":
+            return self.analysis_agent.analyze(
+                parsed,
+                data_artifacts,
+                math_artifacts,
+                attempt=attempt,
+            )
+        if stage == "report":
+            return self.report_agent.format_answer(
+                parsed,
+                data_artifacts,
+                math_artifacts,
+                analysis_artifacts,
+                attempt=attempt,
+            )
+        return agent_invalid_input(
+            agent="orchestrator",
+            message=f"Unknown workflow stage: {stage}",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
+        )
+
+    def _call_requested_agent(
+        self,
+        *,
+        response: AgentResponse,
+        parsed: ParsedMultiAgentTask,
+        data_artifacts: dict[str, Any],
+        math_artifacts: dict[str, Any],
+        analysis_artifacts: dict[str, Any],
+        attempt: int,
+    ) -> AgentResponse:
+        """Call the agent requested by a recovery response."""
+
+        action = response.requested_next_action
+        if action is None:
+            return response
+
+        target = action.target_agent
+        if target == "data_agent":
+            return self.data_agent.load_series_for_regions(parsed, attempt=attempt)
+        if target == "math_agent":
+            return self.math_agent.compute_for_task(
+                parsed,
+                data_artifacts,
+                attempt=attempt,
+            )
+        if target == "analysis_agent":
+            return self.analysis_agent.analyze(
+                parsed,
+                data_artifacts,
+                math_artifacts,
+                attempt=attempt,
+            )
+        return agent_invalid_input(
+            agent="orchestrator",
+            message=f"Unknown requested target agent: {target}",
+            attempt=attempt,
+            max_attempts=MAX_AGENT_RETRIES,
+        )
+
+    def _failure_result(
+        self,
+        parsed: ParsedMultiAgentTask,
+        response: AgentResponse,
+        orchestration_steps: list[MultiAgentStep],
+    ) -> MultiAgentResult:
+        """Return a structured failure result without crashing the evaluation loop."""
+
+        missing = ", ".join(response.missing_artifacts) or "<none>"
+        answer = (
+            f"[ERROR] Cannot complete {parsed.task_type} task: "
+            f"{response.message or response.status.value}; "
+            f"missing required artifacts: {missing}."
+        )
+        return MultiAgentResult(
+            answer=answer,
+            parsed_task=parsed,
+            tool_results={
+                "data": {},
+                "math": {},
+                "analysis": {},
+                "_failure": response.to_dict(),
             },
             trace=self.client.get_trace(),
             orchestration_steps=orchestration_steps,
@@ -1329,6 +1926,210 @@ def _series_id_for_region(data_artifacts: dict[str, Any], region_id: str) -> str
         return str(data_artifacts["series_by_region"][region_id]["series_id"])
     except KeyError as exc:
         raise KeyError(f"Missing data artifact for region {region_id!r}") from exc
+
+
+def _math_missing_series_response(
+    agent_name: str,
+    region_id: str,
+    *,
+    attempt: int,
+) -> AgentResponse:
+    """Return a standard MathAgent missing-series response."""
+
+    missing = [f"data.series_by_region.{region_id}.series_id"]
+    return agent_missing_artifacts(
+        agent=agent_name,
+        missing_artifacts=missing,
+        requested_next_action=RequestedNextAction(
+            target_agent="data_agent",
+            task="load_missing_series",
+            reason="MathAgent cannot compute without series_id",
+            required_artifacts=missing,
+            params={"regions": [region_id]},
+        ),
+        message=f"Cannot compute math artifacts without series_id for {region_id}.",
+        attempt=attempt,
+        max_attempts=MAX_AGENT_RETRIES,
+    )
+
+
+def _math_tool_error_response(
+    agent_name: str,
+    *,
+    tool_name: str,
+    region_id: str,
+    missing_artifact: str,
+    attempt: int,
+) -> AgentResponse:
+    """Return a standard MathAgent retryable tool-error response."""
+
+    return agent_tool_error(
+        agent=agent_name,
+        message=f"{tool_name} failed for {region_id}.",
+        missing_artifacts=[missing_artifact],
+        requested_next_action=RequestedNextAction(
+            target_agent="math_agent",
+            task="retry_compute_step",
+            reason="Tool call failed",
+            required_artifacts=[missing_artifact],
+            params={"tool_name": tool_name, "region": region_id},
+        ),
+        requires_retry=True,
+        attempt=attempt,
+        max_attempts=MAX_AGENT_RETRIES,
+    )
+
+
+def _artifact_path_exists(context: dict[str, Any], path: str) -> bool:
+    """Return whether a dotted artifact path exists in nested dictionaries."""
+
+    current: Any = context
+    for part in path.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return False
+        current = current[part]
+        if current is None:
+            return False
+    return True
+
+
+def _target_agent_for_artifact(path: str) -> str:
+    """Map an artifact path to the role agent that can provide it."""
+
+    if path.startswith("data."):
+        return "data_agent"
+    if path.startswith("math."):
+        return "math_agent"
+    if path.startswith("analysis."):
+        return "analysis_agent"
+    return "orchestrator"
+
+
+def _step_from_response(
+    *,
+    response: AgentResponse,
+    action: str,
+    details: dict[str, Any] | None = None,
+    decision: StepRecoveryDecision | None = None,
+) -> MultiAgentStep:
+    """Convert an AgentResponse into a serializable orchestration step."""
+
+    response_dict = response.to_dict()
+    step_details = dict(details or {})
+    step_details["agent_response"] = response_dict
+    if decision is not None:
+        step_details["orchestrator_decision"] = decision.to_dict()
+
+    return MultiAgentStep(
+        node=response.agent,
+        action=action,
+        details=step_details,
+        status=response.status.value,
+        missing_artifacts=list(response.missing_artifacts),
+        requested_next_action=(
+            response.requested_next_action.to_dict()
+            if response.requested_next_action is not None
+            else None
+        ),
+        can_continue=response.can_continue,
+        requires_retry=response.requires_retry,
+        attempt=response.attempt,
+        max_attempts=response.max_attempts,
+        decision=decision.decision if decision is not None else None,
+    )
+
+
+def _response_can_advance(response: AgentResponse) -> bool:
+    """Return True when workflow can continue after a response."""
+
+    return response.status in {
+        AgentStatus.OK,
+        AgentStatus.PARTIAL,
+        AgentStatus.FINAL,
+    } and response.can_continue
+
+
+def _merge_stage_artifacts(
+    response: AgentResponse,
+    *,
+    data_artifacts: dict[str, Any],
+    math_artifacts: dict[str, Any],
+    analysis_artifacts: dict[str, Any],
+) -> None:
+    """Merge recovered artifacts into workflow state."""
+
+    if response.agent == "data_agent":
+        data_artifacts.update(response.artifacts)
+    elif response.agent == "math_agent":
+        math_artifacts.update(response.artifacts)
+    elif response.agent == "analysis_agent":
+        analysis_artifacts.update(response.artifacts)
+
+
+def _stage_action(stage: str, task_type: str) -> str:
+    """Return high-level action name for a stage."""
+
+    if stage == "data":
+        return "load_series"
+    if stage == "analysis":
+        return "analyze_results"
+    if stage == "report":
+        return "format_final_answer"
+    if stage == "math":
+        return {
+            "high_tec": "compute_high_tec",
+            "stable_intervals": "compute_stable_intervals",
+            "compare_regions": "compute_region_comparison",
+            "report": "compute_report_inputs",
+        }.get(task_type, "compute_for_task")
+    return stage
+
+
+def _stage_details(
+    stage: str,
+    response: AgentResponse,
+    parsed: ParsedMultiAgentTask,
+) -> dict[str, Any]:
+    """Build compact details for a stage step."""
+
+    details: dict[str, Any] = {
+        "task_type": parsed.task_type,
+        "message": response.message,
+    }
+
+    if stage == "data":
+        series_by_region = response.artifacts.get("series_by_region") or {}
+        details.update(
+            {
+                "regions": response.artifacts.get("regions") or _regions_for_parsed(parsed),
+                "series_ids": {
+                    region_id: item.get("series_id")
+                    for region_id, item in series_by_region.items()
+                    if isinstance(item, dict)
+                },
+                "n_series": len(series_by_region),
+            }
+        )
+
+    if stage == "math":
+        details["artifact_keys"] = sorted(response.artifacts)
+
+    if stage == "analysis":
+        findings = response.artifacts.get("findings") or []
+        details["n_findings"] = len(findings)
+        details["finding_types"] = sorted(
+            {
+                str(finding.get("type"))
+                for finding in findings
+                if isinstance(finding, dict) and finding.get("type") is not None
+            }
+        )
+
+    if stage == "report":
+        answer = str(response.artifacts.get("answer", ""))
+        details["answer_length"] = len(answer)
+
+    return details
 
 
 def _report_include(include: list[str] | None) -> list[str]:

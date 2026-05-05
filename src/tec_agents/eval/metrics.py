@@ -630,6 +630,42 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
         if isinstance(result.metrics.get("legacy_report_tool_used"), bool)
     ]
 
+    retry_counts = [
+        result.metrics.get("retry_count")
+        for result in results
+        if isinstance(result.metrics.get("retry_count"), int)
+    ]
+    missing_artifact_counts = [
+        result.metrics.get("missing_artifact_event_count")
+        for result in results
+        if isinstance(result.metrics.get("missing_artifact_event_count"), int)
+    ]
+    tool_error_event_counts = [
+        result.metrics.get("tool_error_event_count")
+        for result in results
+        if isinstance(result.metrics.get("tool_error_event_count"), int)
+    ]
+    recovery_failure_counts = [
+        result.metrics.get("recovery_failure_count")
+        for result in results
+        if isinstance(result.metrics.get("recovery_failure_count"), int)
+    ]
+    recovery_success_counts = [
+        result.metrics.get("recovery_success_count")
+        for result in results
+        if isinstance(result.metrics.get("recovery_success_count"), int)
+    ]
+    max_retry_exceeded_values = [
+        result.metrics.get("max_retry_exceeded")
+        for result in results
+        if isinstance(result.metrics.get("max_retry_exceeded"), bool)
+    ]
+    failed_missing_values = [
+        result.metrics.get("failed_due_to_missing_artifacts")
+        for result in results
+        if isinstance(result.metrics.get("failed_due_to_missing_artifacts"), bool)
+    ]
+
     return {
         "n_tasks": n,
         "n_success": n_success,
@@ -648,6 +684,19 @@ def summarize_metric_results(results: list[MetricResult]) -> dict[str, Any]:
             required_role_agents_called_values
         ),
         "legacy_report_tool_used_rate": _bool_rate(legacy_report_tool_used_values),
+        "avg_retry_count": _avg([float(x) for x in retry_counts]),
+        "total_missing_artifact_event_count": sum(missing_artifact_counts),
+        "total_tool_error_event_count": sum(tool_error_event_counts),
+        "total_recovery_failure_count": sum(recovery_failure_counts),
+        "total_recovery_success_count": sum(recovery_success_counts),
+        "recovery_success_rate": (
+            sum(recovery_success_counts)
+            / (sum(recovery_success_counts) + sum(recovery_failure_counts))
+            if (sum(recovery_success_counts) + sum(recovery_failure_counts))
+            else None
+        ),
+        "max_retry_exceeded_rate": _bool_rate(max_retry_exceeded_values),
+        "failed_due_to_missing_artifacts_rate": _bool_rate(failed_missing_values),
     }
 
 
@@ -759,6 +808,7 @@ def _orchestration_metrics(
         parsed_task=parsed_task,
         nodes=nodes,
     )
+    protocol_metrics = _agent_response_protocol_metrics(steps)
 
     return {
         "orchestration_step_count": len(steps),
@@ -789,6 +839,129 @@ def _orchestration_metrics(
         "math_artifact_available": math_artifact_available,
         "analysis_artifact_available": analysis_artifact_available,
         "report_grounded_in_artifacts": report_grounded_in_artifacts,
+        **protocol_metrics,
+    }
+
+
+def _agent_response_protocol_metrics(
+    steps: list[dict[str, Any]],
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compute protocol and recovery metrics from orchestration steps."""
+
+    responses: list[dict[str, Any]] = []
+    decisions: list[str] = []
+
+    for step in steps:
+        decision = step.get("decision")
+        if isinstance(decision, str) and decision:
+            decisions.append(decision)
+
+        details = step.get("details") or {}
+        agent_response = details.get("agent_response")
+        if isinstance(agent_response, dict):
+            responses.append(agent_response)
+        else:
+            status = step.get("status")
+            if isinstance(status, str) and status:
+                responses.append(
+                    {
+                        "status": status,
+                        "missing_artifacts": step.get("missing_artifacts") or [],
+                        "requires_retry": bool(step.get("requires_retry")),
+                        "attempt": int(step.get("attempt") or 1),
+                        "max_attempts": int(step.get("max_attempts") or 1),
+                        "can_continue": bool(step.get("can_continue", True)),
+                    }
+                )
+
+        for item in details.get("step_responses") or []:
+            if isinstance(item, dict):
+                responses.append(item)
+
+    # Build-plan steps use the default dataclass fields. Treat those as
+    # protocol-carrier steps, but do not count them as agent response events.
+    event_responses = [
+        response
+        for response in responses
+        if response.get("agent") is not None
+        or response.get("status") in {
+            "missing_artifacts",
+            "invalid_input",
+            "tool_error",
+            "partial",
+            "final",
+        }
+    ]
+
+    missing_count = sum(
+        1
+        for response in event_responses
+        if response.get("status") == "missing_artifacts"
+    )
+    tool_error_count = sum(
+        1
+        for response in event_responses
+        if response.get("status") == "tool_error"
+    )
+    partial_count = sum(
+        1
+        for response in event_responses
+        if response.get("status") == "partial"
+    )
+    retry_count = sum(
+        1
+        for response in event_responses
+        if int(response.get("attempt") or 1) > 1
+    )
+    max_retry_exceeded = any(
+        int(response.get("attempt") or 1) >= int(response.get("max_attempts") or 1)
+        and response.get("status") in {"missing_artifacts", "tool_error"}
+        for response in event_responses
+    )
+    recovery_attempt_count = sum(
+        1
+        for decision in decisions
+        if decision in {"retry_same_agent", "call_requested_agent"}
+    )
+    recovery_failure_count = sum(1 for decision in decisions if decision == "fail")
+    recovery_success_count = (
+        sum(
+            1
+            for decision in decisions
+            if decision in {"continue", "continue_partial"}
+        )
+        if recovery_attempt_count
+        else 0
+    )
+    failed_due_to_missing = any(
+        response.get("status") == "missing_artifacts"
+        and response.get("can_continue") is False
+        for response in event_responses
+    )
+    failed_due_to_tool_error = any(
+        response.get("status") == "tool_error"
+        and response.get("can_continue") is False
+        and int(response.get("attempt") or 1) >= int(response.get("max_attempts") or 1)
+        for response in event_responses
+    )
+
+    return {
+        "agent_response_protocol_used": bool(responses),
+        "missing_artifact_event_count": missing_count,
+        "tool_error_event_count": tool_error_count,
+        "partial_event_count": partial_count,
+        "retry_count": retry_count,
+        "max_retry_exceeded": max_retry_exceeded,
+        "recovery_attempt_count": recovery_attempt_count,
+        "recovery_success_count": recovery_success_count,
+        "recovery_failure_count": recovery_failure_count,
+        "orchestrator_decision_count": len(decisions),
+        "failed_due_to_missing_artifacts": failed_due_to_missing,
+        "failed_due_to_tool_error": failed_due_to_tool_error,
+        "single_agent_retry_count": retry_count,
+        "single_agent_recovery_failure_count": recovery_failure_count,
+        "single_agent_missing_artifact_event_count": missing_count,
+        "single_agent_tool_retry_used": retry_count > 0,
     }
 
 

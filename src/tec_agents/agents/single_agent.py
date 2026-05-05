@@ -20,10 +20,19 @@ from typing import Any
 
 from dateutil.relativedelta import relativedelta
 
+from tec_agents.agents.protocol import (
+    AgentResponse,
+    AgentStatus,
+    RequestedNextAction,
+    agent_missing_artifacts,
+    agent_ok,
+    agent_tool_error,
+)
 from tec_agents.data.regions import list_region_ids
 from tec_agents.mcp.client import LocalMCPClient
 
 
+MAX_TOOL_RETRIES = 2
 MONTHS: dict[str, int] = {
     "january": 1,
     "jan": 1,
@@ -80,6 +89,14 @@ class SingleAgentStep:
     node: str
     action: str
     details: dict[str, Any] = field(default_factory=dict)
+    status: str = "ok"
+    missing_artifacts: list[str] = field(default_factory=list)
+    requested_next_action: dict[str, Any] | None = None
+    can_continue: bool = True
+    requires_retry: bool = False
+    attempt: int = 1
+    max_attempts: int = MAX_TOOL_RETRIES
+    decision: str | None = None
 
 
 @dataclass
@@ -91,6 +108,14 @@ class SingleAgentResult:
     tool_results: dict[str, Any] = field(default_factory=dict)
     trace: dict[str, Any] = field(default_factory=dict)
     orchestration_steps: list[SingleAgentStep] = field(default_factory=list)
+
+
+class _SingleAgentFailure(RuntimeError):
+    """Internal structured single-agent failure."""
+
+    def __init__(self, response: AgentResponse) -> None:
+        super().__init__(response.message)
+        self.response = response
 
 
 class RuleBasedSingleAgent:
@@ -110,6 +135,7 @@ class RuleBasedSingleAgent:
         self.client = client
         self.dataset_ref = dataset_ref
         self.agent_name = agent_name
+        self._last_step_responses: list[AgentResponse] = []
 
     def reset(self) -> None:
         """
@@ -126,29 +152,41 @@ class RuleBasedSingleAgent:
     def run(self, query: str) -> SingleAgentResult:
         """Run the agent on one user query."""
 
+        self._last_step_responses = []
         parsed = self.parse_query(query)
+        failure_response: AgentResponse | None = None
 
-        if parsed.task_type == "high_tec":
-            tool_results = self._run_high_tec(parsed)
-            answer = self._format_high_tec_answer(parsed, tool_results)
+        try:
+            if parsed.task_type == "high_tec":
+                tool_results = self._run_high_tec(parsed)
+                answer = self._format_high_tec_answer(parsed, tool_results)
 
-        elif parsed.task_type == "compare_regions":
-            tool_results = self._run_compare_regions(parsed)
-            answer = self._format_compare_regions_answer(parsed, tool_results)
+            elif parsed.task_type == "compare_regions":
+                tool_results = self._run_compare_regions(parsed)
+                answer = self._format_compare_regions_answer(parsed, tool_results)
 
-        elif parsed.task_type == "stable_intervals":
-            tool_results = self._run_stable_intervals(parsed)
-            answer = self._format_stable_intervals_answer(parsed, tool_results)
+            elif parsed.task_type == "stable_intervals":
+                tool_results = self._run_stable_intervals(parsed)
+                answer = self._format_stable_intervals_answer(parsed, tool_results)
 
-        elif parsed.task_type == "report":
-            tool_results = self._run_report(parsed)
-            answer = self._format_report_answer(parsed, tool_results)
+            elif parsed.task_type == "report":
+                tool_results = self._run_report(parsed)
+                answer = self._format_report_answer(parsed, tool_results)
 
-        else:
-            raise ValueError(
-                f"Unsupported task_type={parsed.task_type!r}. "
-                "This baseline currently supports high_tec, compare_regions, "
-                "stable_intervals and report."
+            else:
+                raise ValueError(
+                    f"Unsupported task_type={parsed.task_type!r}. "
+                    "This baseline currently supports high_tec, compare_regions, "
+                    "stable_intervals and report."
+                )
+
+        except _SingleAgentFailure as exc:
+            failure_response = exc.response
+            tool_results = {"_failure": failure_response.to_dict()}
+            missing = ", ".join(failure_response.missing_artifacts) or "<none>"
+            answer = (
+                f"[ERROR] Cannot complete {parsed.task_type} task: "
+                f"{failure_response.message}; missing artifacts: {missing}."
             )
 
         orchestration_steps = [
@@ -169,7 +207,44 @@ class RuleBasedSingleAgent:
                     "include": parsed.include,
                     "metrics": parsed.metrics,
                     "selected_worker": "single_agent",
+                    "step_responses": [
+                        response.to_dict()
+                        for response in self._last_step_responses
+                    ],
                 },
+                status=(
+                    failure_response.status.value
+                    if failure_response is not None
+                    else "ok"
+                ),
+                missing_artifacts=(
+                    failure_response.missing_artifacts
+                    if failure_response is not None
+                    else []
+                ),
+                requested_next_action=(
+                    failure_response.requested_next_action.to_dict()
+                    if failure_response is not None
+                    and failure_response.requested_next_action is not None
+                    else None
+                ),
+                can_continue=(
+                    failure_response.can_continue
+                    if failure_response is not None
+                    else True
+                ),
+                requires_retry=(
+                    failure_response.requires_retry
+                    if failure_response is not None
+                    else False
+                ),
+                attempt=(
+                    failure_response.attempt
+                    if failure_response is not None
+                    else 1
+                ),
+                max_attempts=MAX_TOOL_RETRIES,
+                decision="fail" if failure_response is not None else "continue",
             )
         ]
 
@@ -229,13 +304,103 @@ class RuleBasedSingleAgent:
             raw_query=query,
         )
 
+    def _call_tool_with_retry(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        *,
+        step: int,
+        required: bool = True,
+        missing_artifacts: list[str] | None = None,
+    ) -> dict[str, Any] | None:
+        """Call a tool with bounded deterministic retry handling."""
+
+        last_response: AgentResponse | None = None
+
+        for attempt in range(1, MAX_TOOL_RETRIES + 1):
+            tool_response = self.client.call_tool(
+                tool_name,
+                arguments,
+                agent_name=self.agent_name,
+                step=step,
+            )
+            if tool_response.status == "ok" and tool_response.result is not None:
+                response = agent_ok(
+                    agent=self.agent_name,
+                    artifacts={
+                        "tool_name": tool_name,
+                        "result": tool_response.result,
+                    },
+                    message=f"{tool_name} succeeded.",
+                    attempt=attempt,
+                    max_attempts=MAX_TOOL_RETRIES,
+                )
+                self._last_step_responses.append(response)
+                return tool_response.result
+
+            missing = missing_artifacts or [f"tool.{tool_name}.result"]
+            last_response = agent_tool_error(
+                agent=self.agent_name,
+                message=f"{tool_name} failed.",
+                missing_artifacts=missing,
+                requested_next_action=RequestedNextAction(
+                    target_agent=self.agent_name,
+                    task="retry_tool_call",
+                    reason="Tool call failed",
+                    required_artifacts=missing if required else [],
+                    optional_artifacts=[] if required else missing,
+                    params={"tool_name": tool_name, "arguments": arguments},
+                ),
+                can_continue=not required,
+                requires_retry=attempt < MAX_TOOL_RETRIES,
+                attempt=attempt,
+                max_attempts=MAX_TOOL_RETRIES,
+            )
+            self._last_step_responses.append(last_response)
+
+            if attempt < MAX_TOOL_RETRIES:
+                continue
+
+        if required:
+            assert last_response is not None
+            raise _SingleAgentFailure(last_response)
+
+        return None
+
+    def _require_artifact(
+        self,
+        source: dict[str, Any],
+        key: str,
+        artifact_path: str,
+    ) -> Any:
+        """Return a required artifact field or raise a structured failure."""
+
+        if key in source and source[key] is not None:
+            return source[key]
+
+        response = agent_missing_artifacts(
+            agent=self.agent_name,
+            missing_artifacts=[artifact_path],
+            requested_next_action=RequestedNextAction(
+                target_agent=self.agent_name,
+                task="recover_missing_artifact",
+                reason=f"Missing required artifact {artifact_path}",
+                required_artifacts=[artifact_path],
+            ),
+            message=f"Cannot continue without {artifact_path}.",
+            attempt=1,
+            max_attempts=MAX_TOOL_RETRIES,
+        )
+        self._last_step_responses.append(response)
+        raise _SingleAgentFailure(response)
+
     def _run_high_tec(self, parsed: ParsedSingleAgentTask) -> dict[str, Any]:
         """Execute high-TEC detection through MCP-like tools."""
 
         if parsed.region_id is None:
             raise ValueError("High-TEC task requires region_id")
 
-        ts_result = self.client.call_tool_result(
+        ts_result = self._call_tool_with_retry(
             "tec_get_timeseries",
             {
                 "dataset_ref": parsed.dataset_ref,
@@ -243,26 +408,36 @@ class RuleBasedSingleAgent:
                 "start": parsed.start,
                 "end": parsed.end,
             },
-            agent_name=self.agent_name,
             step=1,
+            missing_artifacts=[f"data.series_by_region.{parsed.region_id}"],
+        )
+        assert ts_result is not None
+
+        series_id = self._require_artifact(
+            ts_result,
+            "series_id",
+            f"data.series_by_region.{parsed.region_id}.series_id",
         )
 
-        series_id = ts_result["series_id"]
-
-        threshold_result = self.client.call_tool_result(
+        threshold_result = self._call_tool_with_retry(
             "tec_compute_high_threshold",
             {
                 "series_id": series_id,
                 "method": "quantile",
                 "q": parsed.q,
             },
-            agent_name=self.agent_name,
             step=2,
+            missing_artifacts=["math.high_tec.threshold"],
+        )
+        assert threshold_result is not None
+
+        threshold_id = self._require_artifact(
+            threshold_result,
+            "threshold_id",
+            "math.high_tec.threshold.threshold_id",
         )
 
-        threshold_id = threshold_result["threshold_id"]
-
-        intervals_result = self.client.call_tool_result(
+        intervals_result = self._call_tool_with_retry(
             "tec_detect_high_intervals",
             {
                 "series_id": series_id,
@@ -270,9 +445,10 @@ class RuleBasedSingleAgent:
                 "min_duration_minutes": 0,
                 "merge_gap_minutes": 60,
             },
-            agent_name=self.agent_name,
             step=3,
+            missing_artifacts=["math.high_tec.intervals"],
         )
+        assert intervals_result is not None
 
         return {
             "timeseries": ts_result,
@@ -292,7 +468,7 @@ class RuleBasedSingleAgent:
 
         step = 1
         for region_id in parsed.region_ids:
-            ts_result = self.client.call_tool_result(
+            ts_result = self._call_tool_with_retry(
                 "tec_get_timeseries",
                 {
                     "dataset_ref": parsed.dataset_ref,
@@ -300,35 +476,49 @@ class RuleBasedSingleAgent:
                     "start": parsed.start,
                     "end": parsed.end,
                 },
-                agent_name=self.agent_name,
                 step=step,
+                missing_artifacts=[f"data.series_by_region.{region_id}"],
             )
+            assert ts_result is not None
             timeseries_results.append(ts_result)
             step += 1
 
         for ts_result in timeseries_results:
-            stats_result = self.client.call_tool_result(
+            series_id = self._require_artifact(
+                ts_result,
+                "series_id",
+                "data.series_by_region.series_id",
+            )
+            stats_result = self._call_tool_with_retry(
                 "tec_compute_series_stats",
                 {
-                    "series_id": ts_result["series_id"],
+                    "series_id": series_id,
                     "metrics": parsed.metrics,
                 },
-                agent_name=self.agent_name,
                 step=step,
+                missing_artifacts=["math.stats_by_region"],
             )
+            assert stats_result is not None
             stats_results.append(stats_result)
-            stats_ids.append(stats_result["stats_id"])
+            stats_ids.append(
+                self._require_artifact(
+                    stats_result,
+                    "stats_id",
+                    "math.stats_by_region.stats_id",
+                )
+            )
             step += 1
 
-        comparison_result = self.client.call_tool_result(
+        comparison_result = self._call_tool_with_retry(
             "tec_compare_stats",
             {
                 "stats_ids": stats_ids,
                 "metrics": parsed.metrics,
             },
-            agent_name=self.agent_name,
             step=step,
+            missing_artifacts=["math.comparison"],
         )
+        assert comparison_result is not None
 
         return {
             "timeseries": timeseries_results,
@@ -342,7 +532,7 @@ class RuleBasedSingleAgent:
         if parsed.region_id is None:
             raise ValueError("Stable-interval task requires region_id")
 
-        ts_result = self.client.call_tool_result(
+        ts_result = self._call_tool_with_retry(
             "tec_get_timeseries",
             {
                 "dataset_ref": parsed.dataset_ref,
@@ -350,13 +540,18 @@ class RuleBasedSingleAgent:
                 "start": parsed.start,
                 "end": parsed.end,
             },
-            agent_name=self.agent_name,
             step=1,
+            missing_artifacts=[f"data.series_by_region.{parsed.region_id}"],
+        )
+        assert ts_result is not None
+
+        series_id = self._require_artifact(
+            ts_result,
+            "series_id",
+            f"data.series_by_region.{parsed.region_id}.series_id",
         )
 
-        series_id = ts_result["series_id"]
-
-        thresholds_result = self.client.call_tool_result(
+        thresholds_result = self._call_tool_with_retry(
             "tec_compute_stability_thresholds",
             {
                 "series_id": series_id,
@@ -365,21 +560,29 @@ class RuleBasedSingleAgent:
                 "q_delta": parsed.q_delta,
                 "q_std": parsed.q_std,
             },
-            agent_name=self.agent_name,
             step=2,
+            missing_artifacts=["math.stable_intervals.thresholds"],
+        )
+        assert thresholds_result is not None
+
+        threshold_id = self._require_artifact(
+            thresholds_result,
+            "threshold_id",
+            "math.stable_intervals.thresholds.threshold_id",
         )
 
-        intervals_result = self.client.call_tool_result(
+        intervals_result = self._call_tool_with_retry(
             "tec_detect_stable_intervals",
             {
                 "series_id": series_id,
-                "threshold_id": thresholds_result["threshold_id"],
+                "threshold_id": threshold_id,
                 "min_duration_minutes": parsed.window_minutes,
                 "merge_gap_minutes": 60,
             },
-            agent_name=self.agent_name,
             step=3,
+            missing_artifacts=["math.stable_intervals.intervals"],
         )
+        assert intervals_result is not None
 
         return {
             "timeseries": ts_result,
@@ -399,7 +602,7 @@ class RuleBasedSingleAgent:
         step = 1
 
         for region_id in parsed.region_ids:
-            ts_result = self.client.call_tool_result(
+            ts_result = self._call_tool_with_retry(
                 "tec_get_timeseries",
                 {
                     "dataset_ref": parsed.dataset_ref,
@@ -407,12 +610,18 @@ class RuleBasedSingleAgent:
                     "start": parsed.start,
                     "end": parsed.end,
                 },
-                agent_name=self.agent_name,
                 step=step,
+                missing_artifacts=[f"data.series_by_region.{region_id}"],
             )
+            assert ts_result is not None
             step += 1
+            series_id = self._require_artifact(
+                ts_result,
+                "series_id",
+                f"data.series_by_region.{region_id}.series_id",
+            )
             series_by_region[region_id] = {
-                "series_id": ts_result["series_id"],
+                "series_id": series_id,
                 "tool_result": ts_result,
                 "metadata": ts_result.get("metadata"),
             }
@@ -423,36 +632,43 @@ class RuleBasedSingleAgent:
 
             for region_id in parsed.region_ids:
                 series_id = series_by_region[region_id]["series_id"]
-                stats_result = self.client.call_tool_result(
+                stats_result = self._call_tool_with_retry(
                     "tec_compute_series_stats",
                     {
                         "series_id": series_id,
                         "metrics": parsed.metrics,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=[f"math.report_inputs.basic_stats.{region_id}"],
                 )
+                assert stats_result is not None
                 step += 1
+                stats_id = self._require_artifact(
+                    stats_result,
+                    "stats_id",
+                    f"math.report_inputs.basic_stats.{region_id}.stats_id",
+                )
 
                 by_region[region_id] = {
-                    "stats_id": stats_result["stats_id"],
+                    "stats_id": stats_id,
                     "series_id": series_id,
                     "stats": stats_result,
                     "metrics": stats_result.get("metrics", {}),
                 }
-                stats_ids.append(stats_result["stats_id"])
+                stats_ids.append(stats_id)
 
             comparison = None
             if len(stats_ids) >= 2:
-                comparison = self.client.call_tool_result(
+                comparison = self._call_tool_with_retry(
                     "tec_compare_stats",
                     {
                         "stats_ids": stats_ids,
                         "metrics": parsed.metrics,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=["math.report_inputs.basic_stats.comparison"],
                 )
+                assert comparison is not None
                 step += 1
 
             report_inputs["basic_stats"] = {
@@ -465,29 +681,36 @@ class RuleBasedSingleAgent:
 
             for region_id in parsed.region_ids:
                 series_id = series_by_region[region_id]["series_id"]
-                threshold_result = self.client.call_tool_result(
+                threshold_result = self._call_tool_with_retry(
                     "tec_compute_high_threshold",
                     {
                         "series_id": series_id,
                         "method": "quantile",
                         "q": parsed.q,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=[f"math.report_inputs.high_tec.{region_id}.threshold"],
                 )
+                assert threshold_result is not None
                 step += 1
+                threshold_id = self._require_artifact(
+                    threshold_result,
+                    "threshold_id",
+                    f"math.report_inputs.high_tec.{region_id}.threshold_id",
+                )
 
-                intervals_result = self.client.call_tool_result(
+                intervals_result = self._call_tool_with_retry(
                     "tec_detect_high_intervals",
                     {
                         "series_id": series_id,
-                        "threshold_id": threshold_result["threshold_id"],
+                        "threshold_id": threshold_id,
                         "min_duration_minutes": 0,
                         "merge_gap_minutes": 60,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=[f"math.report_inputs.high_tec.{region_id}.intervals"],
                 )
+                assert intervals_result is not None
                 step += 1
 
                 by_region[region_id] = {
@@ -502,7 +725,7 @@ class RuleBasedSingleAgent:
 
             for region_id in parsed.region_ids:
                 series_id = series_by_region[region_id]["series_id"]
-                thresholds_result = self.client.call_tool_result(
+                thresholds_result = self._call_tool_with_retry(
                     "tec_compute_stability_thresholds",
                     {
                         "series_id": series_id,
@@ -511,22 +734,33 @@ class RuleBasedSingleAgent:
                         "q_delta": parsed.q_delta,
                         "q_std": parsed.q_std,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=[
+                        f"math.report_inputs.stable_intervals.{region_id}.thresholds"
+                    ],
                 )
+                assert thresholds_result is not None
                 step += 1
+                threshold_id = self._require_artifact(
+                    thresholds_result,
+                    "threshold_id",
+                    f"math.report_inputs.stable_intervals.{region_id}.threshold_id",
+                )
 
-                intervals_result = self.client.call_tool_result(
+                intervals_result = self._call_tool_with_retry(
                     "tec_detect_stable_intervals",
                     {
                         "series_id": series_id,
-                        "threshold_id": thresholds_result["threshold_id"],
+                        "threshold_id": threshold_id,
                         "min_duration_minutes": parsed.window_minutes,
                         "merge_gap_minutes": 60,
                     },
-                    agent_name=self.agent_name,
                     step=step,
+                    missing_artifacts=[
+                        f"math.report_inputs.stable_intervals.{region_id}.intervals"
+                    ],
                 )
+                assert intervals_result is not None
                 step += 1
 
                 by_region[region_id] = {
