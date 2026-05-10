@@ -24,7 +24,11 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from tec_agents.agents.llm_single_agent import LLMSingleAgent
+from tec_agents.agents.llm_single_agent import (
+    LLMSingleAgent,
+    clean_model_output,
+    count_tool_call_blocks,
+)
 from tec_agents.data.datasets import register_dataset
 from tec_agents.mcp.client import LocalMCPClient
 from tec_agents.mcp.server import build_local_mcp_server
@@ -71,6 +75,13 @@ def latest_tool_result(messages: list[dict[str, str]]) -> dict[str, Any]:
     raise AssertionError("No <tool_result> block found in messages.")
 
 
+def latest_artifact(messages: list[dict[str, str]], key: str) -> Any:
+    """Extract one returned artifact from the latest tool observation."""
+
+    payload = latest_tool_result(messages)
+    return payload["returned_artifacts"][key]
+
+
 class FakeHighTecModel:
     """Fake model that emits the expected high-TEC primitive chain."""
 
@@ -88,8 +99,7 @@ class FakeHighTecModel:
 """.strip()
 
         if self.calls == 2:
-            payload = latest_tool_result(messages)
-            series_id = payload["result"]["series_id"]
+            series_id = latest_artifact(messages, "series_id")
             return f"""
 <tool_call>
 {{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
@@ -97,11 +107,11 @@ class FakeHighTecModel:
 """.strip()
 
         if self.calls == 3:
-            payload = latest_tool_result(messages)
-            result = payload["result"]
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
             return f"""
 <tool_call>
-{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{result["series_id"]}", "threshold_id": "{result["threshold_id"]}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
 </tool_call>
 """.strip()
 
@@ -135,10 +145,86 @@ class FakeInvalidJsonThenValidModel:
 </tool_call>
 """.strip()
 
+        if self.calls == 3:
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 4:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
         return """
 <final_answer>
-Recovered from invalid JSON and loaded the series.
+Recovered from invalid JSON and completed high TEC detection.
 </final_answer>
+""".strip()
+
+
+class FakeGarbageMultiToolModel:
+    """Fake model that emits schema garbage and several tool_call blocks."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+assistant schema text that should be ignored
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+user prompt leak
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "highlat_north", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+<tool_call>
+{"name": "tec_compute_high_threshold", "arguments": {"series_id": "bad", "method": "quantile", "q": 0.9}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Completed after cleaning the first valid tool call block.
+</final_answer>
+""".strip()
+
+
+class FakeRepeatedToolModel:
+    """Fake model that keeps repeating the first tool after a valid result."""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
 """.strip()
 
 
@@ -176,6 +262,42 @@ def main() -> None:
     assert result.invalid_json_count == 0
     assert result.unknown_format_count == 0
     assert result.repair_attempt_count == 0
+    assert result.repeated_tool_call_count == 0
+    assert result.stalled_loop_detected is False
+
+    raw_multi = """
+schema garbage
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm"}}
+</tool_call>
+more garbage
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "other"}}
+</tool_call>
+""".strip()
+    cleaned = clean_model_output(raw_multi)
+    assert count_tool_call_blocks(raw_multi) == 2
+    assert count_tool_call_blocks(cleaned) == 1
+    assert cleaned.startswith("<tool_call>")
+    assert cleaned.endswith("</tool_call>")
+
+    garbage_agent = build_agent(
+        FakeGarbageMultiToolModel(),
+        run_id="smoke_llm_single_agent_garbage_multi_tool",
+    )
+    garbage_result = garbage_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    assert garbage_result.success is True
+    assert garbage_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+    ]
+    assert garbage_result.multi_tool_call_output_count == 1
+    assert count_tool_call_blocks(garbage_result.cleaned_model_outputs[0]) == 1
+    assert "schema text" not in garbage_result.cleaned_model_outputs[0]
 
     repair_agent = build_agent(
         FakeInvalidJsonThenValidModel(),
@@ -186,10 +308,33 @@ def main() -> None:
     )
 
     assert repair_result.success is True
-    assert repair_result.tool_sequence == ["tec_get_timeseries"]
+    assert repair_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+    ]
     assert repair_result.parse_error_count == 1
     assert repair_result.invalid_json_count == 1
     assert repair_result.repair_attempt_count > 0
+
+    repeated_agent = build_agent(
+        FakeRepeatedToolModel(),
+        run_id="smoke_llm_single_agent_repeated_tool",
+    )
+    repeated_result = repeated_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    repeated_get_timeseries_calls = [
+        call
+        for call in repeated_result.trace["calls"]
+        if call["tool_name"] == "tec_get_timeseries"
+    ]
+
+    assert repeated_result.success is False
+    assert repeated_result.repeated_tool_call_count > 0
+    assert repeated_result.stalled_loop_detected is True
+    assert len(repeated_get_timeseries_calls) <= 2
 
     print("LLM single-agent parser-only smoke test finished successfully.")
 
