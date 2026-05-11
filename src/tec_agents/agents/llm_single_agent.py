@@ -73,6 +73,11 @@ class LLMSingleAgentResult:
     repair_attempt_count: int
     repeated_tool_call_count: int
     stalled_loop_detected: bool
+    state_feedback_mode: str
+    completed_tool_calls: list[dict[str, Any]]
+    available_artifacts: dict[str, Any]
+    missing_goal_artifacts: list[str]
+    artifact_usage_failure: bool
     tool_sequence: list[str]
     success: bool
     error_message: str | None = None
@@ -97,7 +102,13 @@ class LLMSingleAgent:
         temperature: float = 0.0,
         tool_max_new_tokens: int = 256,
         final_max_new_tokens: int = 512,
+        state_feedback_mode: str = "state_aware",
     ):
+        if state_feedback_mode not in {"minimal", "state_aware"}:
+            raise ValueError(
+                "state_feedback_mode must be 'minimal' or 'state_aware'."
+            )
+
         self.model = model
         self.client = client
         self.max_steps = max_steps
@@ -107,6 +118,7 @@ class LLMSingleAgent:
         self.temperature = temperature
         self.tool_max_new_tokens = tool_max_new_tokens
         self.final_max_new_tokens = final_max_new_tokens
+        self.state_feedback_mode = state_feedback_mode
 
     def reset(self) -> None:
         """Reset the underlying MCP-like client, if supported."""
@@ -118,8 +130,8 @@ class LLMSingleAgent:
     def run(self, user_query: str) -> LLMSingleAgentResult:
         """Run the LLM tool-calling loop for one user query."""
 
-        messages = self._initial_messages(user_query)
         task_state = infer_task_state(user_query)
+        messages = self._initial_messages(user_query, task_state)
         raw_model_outputs: list[str] = []
         cleaned_model_outputs: list[str] = []
         step_records: list[LLMSingleAgentStep] = []
@@ -133,6 +145,7 @@ class LLMSingleAgent:
         repair_attempt_count = 0
         repeated_tool_call_count = 0
         stalled_loop_detected = False
+        artifact_usage_failure = False
         consecutive_parse_errors = 0
         tool_call_count = 0
         tool_error_counts: dict[str, int] = {}
@@ -179,6 +192,7 @@ class LLMSingleAgent:
                 success = _final_answer_is_allowed(task_state, tool_sequence)
                 error_message = None
                 if not success:
+                    artifact_usage_failure = True
                     error_message = (
                         "Final answer produced before required high_tec tools "
                         "completed."
@@ -207,6 +221,7 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=success,
                     error_message=error_message,
@@ -261,6 +276,7 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=False,
                     error_message=parsed.error_message or "Could not parse model output.",
@@ -312,6 +328,7 @@ class LLMSingleAgent:
                     or repair_attempt_count >= self.max_parse_retries
                 ):
                     stalled_loop_detected = True
+                    artifact_usage_failure = True
                     return self._result(
                         answer="",
                         user_query=user_query,
@@ -328,6 +345,7 @@ class LLMSingleAgent:
                         repair_attempt_count=repair_attempt_count,
                         repeated_tool_call_count=repeated_tool_call_count,
                         stalled_loop_detected=stalled_loop_detected,
+                        artifact_usage_failure=artifact_usage_failure,
                         tool_sequence=tool_sequence,
                         success=False,
                         error_message=(
@@ -340,7 +358,7 @@ class LLMSingleAgent:
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_repeated_tool_call_repair_message(
+                        "content": build_repeated_tool_call_correction_message(
                             tool_call.name,
                             tool_call.arguments,
                             task_state,
@@ -385,6 +403,7 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=False,
                     error_message=f"Exceeded max_tool_calls={self.max_tool_calls}.",
@@ -433,6 +452,12 @@ class LLMSingleAgent:
             if response.status == "ok":
                 tool_sequence.append(tool_call.name)
                 successful_tool_call_keys.add(tool_call_key_text)
+                record_completed_tool_call(
+                    task_state=task_state,
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    response=response_dict,
+                )
 
             record = LLMSingleAgentStep(
                 step=step,
@@ -469,6 +494,7 @@ class LLMSingleAgent:
                         repair_attempt_count=repair_attempt_count,
                         repeated_tool_call_count=repeated_tool_call_count,
                         stalled_loop_detected=stalled_loop_detected,
+                        artifact_usage_failure=artifact_usage_failure,
                         tool_sequence=tool_sequence,
                         success=False,
                         error_message=message,
@@ -477,7 +503,7 @@ class LLMSingleAgent:
             messages.append(
                 {
                     "role": "user",
-                    "content": build_tool_observation_message(
+                    "content": self._build_observation_message(
                         tool_call.name,
                         response_dict,
                         task_state,
@@ -501,19 +527,27 @@ class LLMSingleAgent:
             repair_attempt_count=repair_attempt_count,
             repeated_tool_call_count=repeated_tool_call_count,
             stalled_loop_detected=stalled_loop_detected,
+            artifact_usage_failure=artifact_usage_failure,
             tool_sequence=tool_sequence,
             success=False,
             error_message=f"Exceeded max_steps={self.max_steps}.",
         )
 
-    def _initial_messages(self, user_query: str) -> list[dict[str, str]]:
+    def _initial_messages(
+        self,
+        user_query: str,
+        task_state: dict[str, Any],
+    ) -> list[dict[str, str]]:
         """Build system and user messages for the first model call."""
 
         system_prompt = "\n\n".join(
             [
                 build_single_agent_system_prompt(),
                 build_tool_calling_instruction(),
-                _build_available_tools_context(self.client.list_tool_views()),
+                _build_available_tools_context(
+                    self.client.list_tool_views(),
+                    task_state=task_state,
+                ),
             ]
         )
 
@@ -521,6 +555,23 @@ class LLMSingleAgent:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_query},
         ]
+
+    def _build_observation_message(
+        self,
+        tool_name: str,
+        tool_response: dict[str, Any],
+        task_state: dict[str, Any],
+    ) -> str:
+        """Build a tool observation according to the configured feedback mode."""
+
+        if self.state_feedback_mode == "minimal":
+            return build_minimal_observation_message(tool_name, tool_response)
+
+        return build_state_aware_observation_message(
+            tool_name,
+            tool_response,
+            task_state,
+        )
 
     def _result(
         self,
@@ -540,6 +591,7 @@ class LLMSingleAgent:
         repair_attempt_count: int,
         repeated_tool_call_count: int,
         stalled_loop_detected: bool,
+        artifact_usage_failure: bool,
         tool_sequence: list[str],
         success: bool,
         error_message: str | None,
@@ -567,6 +619,13 @@ class LLMSingleAgent:
             repair_attempt_count=repair_attempt_count,
             repeated_tool_call_count=repeated_tool_call_count,
             stalled_loop_detected=stalled_loop_detected,
+            state_feedback_mode=self.state_feedback_mode,
+            completed_tool_calls=list(task_state.get("completed_tool_calls") or []),
+            available_artifacts=dict(task_state.get("available_artifacts") or {}),
+            missing_goal_artifacts=list(
+                task_state.get("missing_goal_artifacts") or []
+            ),
+            artifact_usage_failure=artifact_usage_failure,
             tool_sequence=tool_sequence,
             success=success,
             error_message=error_message,
@@ -578,7 +637,7 @@ def build_tool_calling_instruction() -> str:
 
     return """
 Textual tool-call protocol:
-- You must return exactly one of:
+- Return exactly one block:
   <tool_call>...</tool_call>
   or
   <final_answer>...</final_answer>
@@ -592,17 +651,13 @@ Textual tool-call protocol:
 - Do not fabricate thresholds, intervals, means, p90 values, or peaks.
 - If the task is complete, return <final_answer>...</final_answer>.
 - If a tool result gives an artifact id, use that id in the next tool call.
-
-Current experiment constraints:
-- For high_tec tasks, use this chain:
-  1. tec_get_timeseries
-  2. tec_compute_high_threshold
-  3. tec_detect_high_intervals
-  4. final_answer
-- After tec_get_timeseries returns a series_id, do not call
-  tec_get_timeseries again for the same region/date.
-- Use series_id in tec_compute_high_threshold.
-- After threshold_id is returned, use it in tec_detect_high_intervals.
+- You will receive task state updates after tool calls.
+- Use available artifacts from state updates.
+- Do not repeat completed successful tool calls with the same arguments.
+- If an artifact id is available, use it when relevant.
+- You must choose the next tool yourself.
+- For high_tec tasks, high TEC intervals require a time series, a high
+  threshold, and interval detection.
 - Never output more than one tool call.
 - Do not include role labels, schema text, examples, or markdown.
 """.strip()
@@ -687,7 +742,7 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         start = "2024-03-01"
         end = "2024-04-01"
 
-    return {
+    task_state = {
         "raw_query": user_query,
         "task_type": task_type,
         "dataset_ref": "default",
@@ -701,7 +756,27 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         "n_intervals": None,
         "series_by_region": {},
         "available_artifacts": {},
+        "completed_tool_calls": [],
+        "missing_goal_artifacts": [],
     }
+    task_state["missing_goal_artifacts"] = compute_missing_goal_artifacts(task_state)
+    return task_state
+
+
+def compute_missing_goal_artifacts(task_state: dict[str, Any]) -> list[str]:
+    """Return missing goal artifacts for the currently inferred task."""
+
+    if task_state.get("task_type") == "high_tec":
+        missing: list[str] = []
+        if not task_state.get("series_id"):
+            missing.append("series_id")
+        if not task_state.get("threshold_id"):
+            missing.append("threshold_id")
+        if not task_state.get("intervals_ready"):
+            missing.append("high_tec_intervals")
+        return missing
+
+    return []
 
 
 def update_task_state_from_tool_result(
@@ -744,6 +819,10 @@ def update_task_state_from_tool_result(
         if threshold_id is not None:
             task_state["threshold_id"] = threshold_id
             artifacts["threshold_id"] = threshold_id
+        if result.get("value") is not None:
+            artifacts["threshold_value"] = result["value"]
+        if result.get("threshold_value") is not None:
+            artifacts["threshold_value"] = result["threshold_value"]
         if result.get("series_id") is not None:
             task_state["series_id"] = result["series_id"]
             artifacts["series_id"] = result["series_id"]
@@ -752,6 +831,10 @@ def update_task_state_from_tool_result(
         task_state["intervals_ready"] = True
         task_state["n_intervals"] = result.get("n_intervals")
         artifacts["intervals"] = "ready"
+        if result.get("n_intervals") is not None:
+            artifacts["n_intervals"] = result["n_intervals"]
+        if result.get("intervals") is not None:
+            artifacts["intervals"] = result["intervals"]
         if result.get("series_id") is not None:
             task_state["series_id"] = result["series_id"]
             artifacts["series_id"] = result["series_id"]
@@ -767,13 +850,57 @@ def update_task_state_from_tool_result(
         if result.get("comparison_id") is not None:
             artifacts["comparison_id"] = result["comparison_id"]
 
+    task_state["missing_goal_artifacts"] = compute_missing_goal_artifacts(task_state)
 
-def build_tool_observation_message(
+
+def record_completed_tool_call(
+    *,
+    task_state: dict[str, Any],
+    tool_name: str,
+    arguments: dict[str, Any],
+    response: dict[str, Any],
+) -> None:
+    """Record one successful executed tool call in task state."""
+
+    if response.get("status") != "ok":
+        return
+
+    record = {
+        "tool_name": tool_name,
+        "arguments": dict(arguments),
+        "canonical_arguments": canonical_arguments_json(arguments),
+        "returned_artifacts": _returned_artifacts(response),
+    }
+    task_state.setdefault("completed_tool_calls", []).append(record)
+
+
+def build_minimal_observation_message(
+    tool_name: str,
+    tool_response: dict[str, Any],
+) -> str:
+    """Build the compact legacy-style observation message."""
+
+    observation = {
+        "tool_name": tool_name,
+        "status": tool_response.get("status"),
+        "returned_artifacts": _returned_artifacts(tool_response),
+    }
+    return (
+        "Tool result:\n"
+        "<tool_result>\n"
+        f"{json.dumps(observation, ensure_ascii=False, indent=2, default=str)}\n"
+        "</tool_result>\n\n"
+        "Continue the task. Return exactly one <tool_call>...</tool_call> "
+        "or <final_answer>...</final_answer>."
+    )
+
+
+def build_state_aware_observation_message(
     tool_name: str,
     tool_response: dict[str, Any],
     task_state: dict[str, Any],
 ) -> str:
-    """Build a stateful observation message after a tool call."""
+    """Build a state-aware observation without an exact next-tool command."""
 
     returned_artifacts = _returned_artifacts(tool_response)
     observation = {
@@ -783,36 +910,101 @@ def build_tool_observation_message(
     }
 
     lines = [
-        "Tool result:",
         "<tool_result>",
         json.dumps(observation, ensure_ascii=False, indent=2, default=str),
         "</tool_result>",
         "",
-        f"Current task: {task_state.get('task_type')}.",
-        "Available artifacts:",
+        "Current task state:",
+        f"- task_type: {task_state.get('task_type')}",
+        f"- target_region: {task_state.get('region_id')}",
+        f"- q: {task_state.get('q')}",
+        f"- period: {task_state.get('start')} to {task_state.get('end')}",
+        "- available_artifacts:",
     ]
 
     artifact_lines = _available_artifact_lines(task_state)
-    lines.extend(artifact_lines if artifact_lines else ["- <none>"])
+    lines.extend([f"  {line}" for line in artifact_lines] or ["  - <none>"])
 
-    repeated_warning = _do_not_repeat_line(tool_name, task_state)
-    if repeated_warning is not None:
-        lines.extend(["", repeated_warning])
+    missing = task_state.get("missing_goal_artifacts") or []
+    lines.append("- missing_goal_artifacts:")
+    lines.extend([f"  - {item}" for item in missing] or ["  - <none>"])
 
-    lines.extend(
-        [
-            "",
-            "Valid next tools:",
-            _valid_next_tools_line(task_state),
-            "",
-            "Next required step:",
-            _next_required_step_text(task_state),
-            "",
-            "Return exactly one <tool_call> or <final_answer>. No explanations.",
-        ]
-    )
+    completed = task_state.get("completed_tool_calls") or []
+    lines.append("- completed_successful_tool_calls:")
+    lines.extend(_completed_tool_call_lines(completed) or ["  - <none>"])
+
+    if missing:
+        lines.extend(
+            [
+                "",
+                "Rules:",
+                "- Do not repeat a completed successful tool call with the same arguments unless its result is invalid.",
+                "- Choose the next valid tool yourself based on the available artifacts and the remaining goal.",
+                "- If an artifact id is available, use it when relevant.",
+                "- Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
+                "- Do not include explanations, markdown, role labels, or schema text outside the tags.",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                "",
+                "Rules:",
+                "- If the user goal is complete, return <final_answer> grounded only in tool results.",
+                "- Do not call additional tools unless necessary.",
+                "- Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
+                "- Do not include explanations, markdown, role labels, or schema text outside the tags.",
+            ]
+        )
 
     return "\n".join(lines)
+
+
+def build_tool_observation_message(
+    tool_name: str,
+    tool_response: dict[str, Any],
+    task_state: dict[str, Any],
+) -> str:
+    """Backward-compatible alias for state-aware observations."""
+
+    return build_state_aware_observation_message(
+        tool_name,
+        tool_response,
+        task_state,
+    )
+
+
+def build_repeated_tool_call_correction_message(
+    repeated_tool_name: str,
+    repeated_arguments: dict[str, Any],
+    task_state: dict[str, Any],
+) -> str:
+    """Return a correction that does not force an exact next tool call."""
+
+    return "\n".join(
+        [
+            "Your previous tool call was rejected because it repeats a completed successful call.",
+            "",
+            "Repeated completed call:",
+            f"- tool: {repeated_tool_name}",
+            f"- same arguments: {safe_compact_json(repeated_arguments)}",
+            "",
+            "Available artifacts from completed calls:",
+            *(_available_artifact_lines(task_state) or ["- <none>"]),
+            "",
+            "The user goal is not complete yet."
+            if task_state.get("missing_goal_artifacts")
+            else "The user goal appears complete.",
+            "Still missing:",
+            *(_missing_goal_artifact_lines(task_state) or ["- <none>"]),
+            "",
+            "Choose a different valid tool that uses the available artifacts and helps complete the remaining goal.",
+            f"Do not repeat {repeated_tool_name} with the same arguments.",
+            "",
+            "Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
+            "Do not include explanations, markdown, role labels, or schema text outside the tags.",
+        ]
+    )
 
 
 def build_repeated_tool_call_repair_message(
@@ -820,26 +1012,12 @@ def build_repeated_tool_call_repair_message(
     arguments: dict[str, Any],
     task_state: dict[str, Any],
 ) -> str:
-    """Return a repair instruction for a repeated identical tool call."""
+    """Backward-compatible alias for repeated-call correction."""
 
-    return "\n".join(
-        [
-            (
-                "You already called this tool with the same arguments and "
-                "received a valid result."
-            ),
-            f"Repeated tool: {tool_name}",
-            f"Repeated arguments: {safe_compact_json(arguments)}",
-            "Use the returned artifact id instead of calling it again.",
-            "",
-            "Available artifacts:",
-            *(_available_artifact_lines(task_state) or ["- <none>"]),
-            "",
-            "For this task, the next expected step is:",
-            _next_required_step_text(task_state),
-            "",
-            "Return exactly one <tool_call> or <final_answer>. No explanations.",
-        ]
+    return build_repeated_tool_call_correction_message(
+        tool_name,
+        arguments,
+        task_state,
     )
 
 
@@ -961,108 +1139,29 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _do_not_repeat_line(
-    tool_name: str,
-    task_state: dict[str, Any],
-) -> str | None:
-    """Return a targeted don't-repeat instruction for the last successful tool."""
+def _missing_goal_artifact_lines(task_state: dict[str, Any]) -> list[str]:
+    """Return compact lines for missing goal artifacts."""
 
-    if tool_name == "tec_get_timeseries" and task_state.get("series_id") is not None:
-        region_id = task_state.get("region_id") or "this region"
-        return f"Do not call tec_get_timeseries again for {region_id}."
-
-    if (
-        tool_name == "tec_compute_high_threshold"
-        and task_state.get("threshold_id") is not None
-    ):
-        return "Do not call tec_compute_high_threshold again for this series."
-
-    if tool_name == "tec_detect_high_intervals" and task_state.get("intervals_ready"):
-        return "Do not call high TEC tools again unless the user asks for more."
-
-    return None
+    return [f"- {item}" for item in task_state.get("missing_goal_artifacts") or []]
 
 
-def _valid_next_tools_line(task_state: dict[str, Any]) -> str:
-    """Return a concise list of valid next tools for known task state."""
+def _completed_tool_call_lines(
+    completed_tool_calls: list[dict[str, Any]],
+) -> list[str]:
+    """Return compact lines for successful completed tool calls."""
 
-    if task_state.get("task_type") == "high_tec":
-        if task_state.get("series_id") is None:
-            return "- tec_get_timeseries"
-        if task_state.get("threshold_id") is None:
-            return "- tec_compute_high_threshold"
-        if not task_state.get("intervals_ready"):
-            return "- tec_detect_high_intervals"
-        return "- none; return final_answer"
-
-    return "- choose the next primitive tool required by the task"
-
-
-def _next_required_step_text(task_state: dict[str, Any]) -> str:
-    """Return a deterministic next-step hint for the model."""
-
-    if task_state.get("task_type") == "high_tec":
-        series_id = task_state.get("series_id")
-        threshold_id = task_state.get("threshold_id")
-        region_id = task_state.get("region_id")
-        start = task_state.get("start")
-        end = task_state.get("end")
-        dataset_ref = task_state.get("dataset_ref") or "default"
-        q = task_state.get("q", 0.9)
-
-        if series_id is None:
-            args = {
-                "dataset_ref": dataset_ref,
-                "region_id": region_id,
-                "start": start,
-                "end": end,
-            }
-            args = {key: value for key, value in args.items() if value is not None}
-            return _format_tool_call_hint("tec_get_timeseries", args)
-
-        if threshold_id is None:
-            return _format_tool_call_hint(
-                "tec_compute_high_threshold",
-                {
-                    "series_id": series_id,
-                    "method": "quantile",
-                    "q": q,
-                },
-            )
-
-        if not task_state.get("intervals_ready"):
-            return _format_tool_call_hint(
-                "tec_detect_high_intervals",
-                {
-                    "series_id": series_id,
-                    "threshold_id": threshold_id,
-                    "min_duration_minutes": 0,
-                    "merge_gap_minutes": 60,
-                },
-            )
-
-        return (
-            "<final_answer>\n"
-            "Summarize the high TEC threshold and detected intervals using only "
-            "tool results.\n"
-            "</final_answer>"
-        )
-
-    return "Use the primitive tool chain for the current task, or return final_answer if complete."
-
-
-def _format_tool_call_hint(tool_name: str, arguments: dict[str, Any]) -> str:
-    """Format an exact textual tool-call hint."""
-
-    payload = {
-        "name": tool_name,
-        "arguments": arguments,
-    }
-    return (
-        "<tool_call>\n"
-        f"{json.dumps(payload, ensure_ascii=False)}\n"
-        "</tool_call>"
-    )
+    lines: list[str] = []
+    for item in completed_tool_calls:
+        tool_name = item.get("tool_name")
+        arguments = item.get("arguments") or {}
+        region = arguments.get("region_id")
+        start = arguments.get("start")
+        end = arguments.get("end")
+        if region is not None and start is not None and end is not None:
+            lines.append(f"  - {tool_name} for {region}, {start} to {end}")
+        else:
+            lines.append(f"  - {tool_name} with arguments {safe_compact_json(arguments)}")
+    return lines
 
 
 def _parse_agent_output(text: str):
@@ -1131,28 +1230,29 @@ def safe_compact_json(value: Any, *, max_list_items: int = 8) -> str:
     return json.dumps(compact, ensure_ascii=False, indent=2, default=str)
 
 
-def _build_available_tools_context(tools: list[MCPToolView]) -> str:
-    """Build a compact tool schema block for the model prompt."""
+def _build_available_tools_context(
+    tools: list[MCPToolView],
+    *,
+    task_state: dict[str, Any],
+) -> str:
+    """Build a compact allowed-tool summary without long schemas."""
 
-    tool_payload = []
-    for tool in tools:
-        schema = tool.input_schema or {}
-        tool_payload.append(
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "arguments_schema": {
-                    "properties": schema.get("properties", {}),
-                    "required": schema.get("required", []),
-                },
-            }
+    task_type = task_state.get("task_type")
+
+    if task_type == "high_tec":
+        return "\n".join(
+            [
+                "Available tools for this task:",
+                "- tec_get_timeseries: obtain a TEC time series and return series_id.",
+                "- tec_compute_high_threshold: compute a high TEC threshold from series_id and return threshold_id.",
+                "- tec_detect_high_intervals: detect high TEC intervals using series_id and threshold_id.",
+            ]
         )
 
-    return (
-        "Available deterministic tools. Use these exact names and argument "
-        "schemas:\n"
-        f"{json.dumps(tool_payload, ensure_ascii=False, indent=2)}"
-    )
+    lines = ["Available deterministic tools:"]
+    for tool in tools:
+        lines.append(f"- {tool.name}: {tool.description}")
+    return "\n".join(lines)
 
 
 def _repair_message_for_parse_error(parsed) -> str:

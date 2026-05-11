@@ -228,12 +228,69 @@ class FakeRepeatedToolModel:
 """.strip()
 
 
-def build_agent(model, run_id: str) -> LLMSingleAgent:
+class FakeRepeatThenRecoverModel:
+    """Fake model that recovers after a state-aware repeated-call correction."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.correction_message = ""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            self.correction_message = messages[-1]["content"]
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 4:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Recovered after a repeated call correction and completed high TEC detection.
+</final_answer>
+""".strip()
+
+
+def build_agent(
+    model,
+    run_id: str,
+    state_feedback_mode: str = "state_aware",
+) -> LLMSingleAgent:
     """Build an LLMSingleAgent with a fresh local MCP-like client."""
 
     server = build_local_mcp_server(run_id=run_id)
     client = LocalMCPClient(server)
-    return LLMSingleAgent(model=model, client=client)
+    return LLMSingleAgent(
+        model=model,
+        client=client,
+        state_feedback_mode=state_feedback_mode,
+    )
 
 
 def main() -> None:
@@ -264,6 +321,12 @@ def main() -> None:
     assert result.repair_attempt_count == 0
     assert result.repeated_tool_call_count == 0
     assert result.stalled_loop_detected is False
+    assert result.artifact_usage_failure is False
+    assert result.state_feedback_mode == "state_aware"
+    assert result.missing_goal_artifacts == []
+    assert "series_id" in result.available_artifacts
+    assert "threshold_id" in result.available_artifacts
+    assert len(result.completed_tool_calls) == 3
 
     raw_multi = """
 schema garbage
@@ -316,6 +379,30 @@ more garbage
     assert repair_result.parse_error_count == 1
     assert repair_result.invalid_json_count == 1
     assert repair_result.repair_attempt_count > 0
+    assert repair_result.artifact_usage_failure is False
+
+    repeat_then_recover_model = FakeRepeatThenRecoverModel()
+    repeat_then_recover_agent = build_agent(
+        repeat_then_recover_model,
+        run_id="smoke_llm_single_agent_repeat_then_recover",
+    )
+    repeat_then_recover_result = repeat_then_recover_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    assert repeat_then_recover_result.success is True
+    assert repeat_then_recover_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+    ]
+    assert repeat_then_recover_result.repeated_tool_call_count == 1
+    assert repeat_then_recover_result.repair_attempt_count >= 1
+    assert repeat_then_recover_result.stalled_loop_detected is False
+    assert repeat_then_recover_result.artifact_usage_failure is False
+    assert repeat_then_recover_result.state_feedback_mode == "state_aware"
+    assert "tec_compute_high_threshold" not in repeat_then_recover_model.correction_message
+    assert '<tool_call>\n{"name":' not in repeat_then_recover_model.correction_message
 
     repeated_agent = build_agent(
         FakeRepeatedToolModel(),
@@ -332,9 +419,11 @@ more garbage
     ]
 
     assert repeated_result.success is False
-    assert repeated_result.repeated_tool_call_count > 0
+    assert repeated_result.repeated_tool_call_count >= 2
     assert repeated_result.stalled_loop_detected is True
-    assert len(repeated_get_timeseries_calls) <= 2
+    assert repeated_result.artifact_usage_failure is True
+    assert repeated_result.state_feedback_mode == "state_aware"
+    assert len(repeated_get_timeseries_calls) == 1
 
     print("LLM single-agent parser-only smoke test finished successfully.")
 
