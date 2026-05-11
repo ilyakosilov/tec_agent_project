@@ -1,0 +1,3223 @@
+{
+  "experiment_id": "smoke_single_agent_rule_based",
+  "architecture": "single_agent_rule_based",
+  "model_name": "none",
+  "summary": {
+    "n_tasks": 3,
+    "n_success": 3,
+    "n_failed": 0,
+    "success_rate": 1.0,
+    "avg_tool_call_count": 3.6666666666666665,
+    "avg_tool_error_count": 0.0,
+    "avg_orchestration_step_count": 1.0,
+    "route_correct_rate": 1.0,
+    "tool_sequence_match_rate": 1.0,
+    "role_agent_order_match_rate": 0.0,
+    "artifact_flow_valid_rate": 0.0,
+    "required_role_agents_called_rate": 0.0,
+    "legacy_report_tool_used_rate": 0.0,
+    "experiment_id": "smoke_single_agent_rule_based",
+    "architecture": "single_agent_rule_based",
+    "model_name": "none"
+  },
+  "records": [
+    {
+      "task": {
+        "task_id": "smoke_hightec_midlat_europe_march_2024",
+        "query": "Find high TEC intervals for midlat_europe in March 2024 with q=0.9",
+        "task_type": "high_tec",
+        "dataset_ref": "smoke",
+        "start": "2024-03-01",
+        "end": "2024-04-01",
+        "region_id": "midlat_europe",
+        "region_ids": [
+          "midlat_europe"
+        ],
+        "q": 0.9,
+        "params": {},
+        "expected_tool_sequence": [
+          "tec_get_timeseries",
+          "tec_compute_high_threshold",
+          "tec_detect_high_intervals"
+        ],
+        "expected_worker": "role_based_workflow",
+        "description": "Smoke high-TEC task for the synthetic Europe series."
+      },
+      "gold": {
+        "task_id": "smoke_hightec_midlat_europe_march_2024",
+        "task_type": "high_tec",
+        "status": "success",
+        "result": {
+          "task_id": "smoke_hightec_midlat_europe_march_2024",
+          "task_type": "high_tec",
+          "dataset_ref": "smoke",
+          "region_id": "midlat_europe",
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "q": 0.9,
+          "series": {
+            "series_id": "series_e87e837247",
+            "metadata": {
+              "series_id": "series_e87e837247",
+              "dataset_ref": "smoke",
+              "region_id": "midlat_europe",
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "n_points": 744,
+              "finite_points": 744,
+              "freq": null,
+              "min_value": 17.00007834759437,
+              "max_value": 52.97463835423039,
+              "mean_value": 25.552842110134385,
+              "approx_q90": 32.72001043550788
+            }
+          },
+          "threshold": {
+            "threshold_id": "thr_3c630b1fba",
+            "series_id": "series_e87e837247",
+            "method": "quantile",
+            "q": 0.9,
+            "value": 32.72001043550788,
+            "n_points_used": 744
+          },
+          "intervals": {
+            "series_id": "series_e87e837247",
+            "threshold_id": "thr_3c630b1fba",
+            "threshold_value": 32.72001043550788,
+            "n_intervals": 22,
+            "intervals": [
+              {
+                "start": "2024-03-01 08:00:00",
+                "end": "2024-03-01 11:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-01 09:00:00",
+                "peak_value": 32.97995989283243,
+                "mean_value": 32.86115099895326,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-02 22:00:00",
+                "end": "2024-03-03 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-02 23:00:00",
+                "peak_value": 32.99829465131377,
+                "mean_value": 32.92440764006394,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-04 12:00:00",
+                "end": "2024-03-04 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-04 13:00:00",
+                "peak_value": 32.99651931720703,
+                "mean_value": 32.922648706219604,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-06 00:00:00",
+                "end": "2024-03-06 10:00:00",
+                "duration_minutes": 600.0,
+                "peak_time": "2024-03-06 03:00:00",
+                "peak_value": 52.97463835423039,
+                "mean_value": 51.35085776223248,
+                "n_points": 11
+              },
+              {
+                "start": "2024-03-07 15:00:00",
+                "end": "2024-03-07 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-07 16:00:00",
+                "peak_value": 32.99456276624078,
+                "mean_value": 32.920710229569146,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-09 05:00:00",
+                "end": "2024-03-09 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-09 06:00:00",
+                "peak_value": 32.99929488085814,
+                "mean_value": 32.92539862964219,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-10 19:00:00",
+                "end": "2024-03-10 21:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-10 20:00:00",
+                "peak_value": 32.98391438801273,
+                "mean_value": 32.91016021941531,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-12 08:00:00",
+                "end": "2024-03-12 10:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-12 09:00:00",
+                "peak_value": 32.988726979294164,
+                "mean_value": 32.91492835272144,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-13 22:00:00",
+                "end": "2024-03-14 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-13 23:00:00",
+                "peak_value": 32.99996529730112,
+                "mean_value": 32.92606285288156,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-15 12:00:00",
+                "end": "2024-03-15 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-15 13:00:00",
+                "peak_value": 32.99108932221888,
+                "mean_value": 32.917268872686904,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-17 01:00:00",
+                "end": "2024-03-17 04:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-17 02:00:00",
+                "peak_value": 32.98078882625809,
+                "mean_value": 32.86099649116648,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-17 16:00:00",
+                "end": "2024-03-17 18:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-17 16:00:00",
+                "peak_value": 34.88785588646847,
+                "mean_value": 33.99384740669438,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-18 00:00:00",
+                "end": "2024-03-18 00:00:00",
+                "duration_minutes": 0.0,
+                "peak_time": "2024-03-18 00:00:00",
+                "peak_value": 32.81657855448567,
+                "mean_value": 32.81657855448567,
+                "n_points": 1
+              },
+              {
+                "start": "2024-03-18 15:00:00",
+                "end": "2024-03-18 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-18 16:00:00",
+                "peak_value": 32.99853039010474,
+                "mean_value": 32.924641201136346,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-20 05:00:00",
+                "end": "2024-03-20 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-20 06:00:00",
+                "peak_value": 32.99616126864585,
+                "mean_value": 32.922293965255754,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-21 18:00:00",
+                "end": "2024-03-21 21:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-21 20:00:00",
+                "peak_value": 32.97368741855769,
+                "mean_value": 32.86174971604434,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-23 08:00:00",
+                "end": "2024-03-23 10:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-23 09:00:00",
+                "peak_value": 32.99499053688867,
+                "mean_value": 32.921134048537816,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-24 22:00:00",
+                "end": "2024-03-25 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-24 23:00:00",
+                "peak_value": 32.99912889252674,
+                "mean_value": 32.92523417468537,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-26 12:00:00",
+                "end": "2024-03-26 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-26 13:00:00",
+                "peak_value": 32.9831550580461,
+                "mean_value": 32.9094079040217,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-28 01:00:00",
+                "end": "2024-03-28 03:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-28 02:00:00",
+                "peak_value": 32.98934666922401,
+                "mean_value": 32.915542318051386,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-29 15:00:00",
+                "end": "2024-03-29 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-29 16:00:00",
+                "peak_value": 32.99999141288208,
+                "mean_value": 32.92608872721082,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-31 05:00:00",
+                "end": "2024-03-31 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-31 06:00:00",
+                "peak_value": 32.99052179778864,
+                "mean_value": 32.91670659095973,
+                "n_points": 3
+              }
+            ]
+          }
+        },
+        "error": null,
+        "trace": {
+          "run_id": "gold_smoke_hightec_midlat_europe_march_2024",
+          "n_calls": 3,
+          "calls": [
+            {
+              "call_id": "call_11f34999fe",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.024495699999533826,
+              "output": {
+                "series_id": "series_e87e837247",
+                "metadata": {
+                  "series_id": "series_e87e837247",
+                  "dataset_ref": "smoke",
+                  "region_id": "midlat_europe",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 17.00007834759437,
+                  "max_value": 52.97463835423039,
+                  "mean_value": 25.552842110134385,
+                  "approx_q90": 32.72001043550788
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 1
+            },
+            {
+              "call_id": "call_0eb53db453",
+              "tool_name": "tec_compute_high_threshold",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "method": "quantile",
+                "q": 0.9
+              },
+              "status": "ok",
+              "latency_sec": 0.0009518999995634658,
+              "output": {
+                "threshold_id": "thr_3c630b1fba",
+                "series_id": "series_e87e837247",
+                "method": "quantile",
+                "q": 0.9,
+                "value": 32.72001043550788,
+                "n_points_used": 744
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 2
+            },
+            {
+              "call_id": "call_e21c0fa6c9",
+              "tool_name": "tec_detect_high_intervals",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "threshold_id": "thr_3c630b1fba",
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60
+              },
+              "status": "ok",
+              "latency_sec": 0.018696500001169625,
+              "output": {
+                "series_id": "series_e87e837247",
+                "threshold_id": "thr_3c630b1fba",
+                "threshold_value": 32.72001043550788,
+                "n_intervals": 22,
+                "intervals": [
+                  {
+                    "start": "2024-03-01 08:00:00",
+                    "end": "2024-03-01 11:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-01 09:00:00",
+                    "peak_value": 32.97995989283243,
+                    "mean_value": 32.86115099895326,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-02 22:00:00",
+                    "end": "2024-03-03 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-02 23:00:00",
+                    "peak_value": 32.99829465131377,
+                    "mean_value": 32.92440764006394,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-04 12:00:00",
+                    "end": "2024-03-04 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-04 13:00:00",
+                    "peak_value": 32.99651931720703,
+                    "mean_value": 32.922648706219604,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-06 00:00:00",
+                    "end": "2024-03-06 10:00:00",
+                    "duration_minutes": 600.0,
+                    "peak_time": "2024-03-06 03:00:00",
+                    "peak_value": 52.97463835423039,
+                    "mean_value": 51.35085776223248,
+                    "n_points": 11
+                  },
+                  {
+                    "start": "2024-03-07 15:00:00",
+                    "end": "2024-03-07 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-07 16:00:00",
+                    "peak_value": 32.99456276624078,
+                    "mean_value": 32.920710229569146,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-09 05:00:00",
+                    "end": "2024-03-09 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-09 06:00:00",
+                    "peak_value": 32.99929488085814,
+                    "mean_value": 32.92539862964219,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-10 19:00:00",
+                    "end": "2024-03-10 21:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-10 20:00:00",
+                    "peak_value": 32.98391438801273,
+                    "mean_value": 32.91016021941531,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-12 08:00:00",
+                    "end": "2024-03-12 10:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-12 09:00:00",
+                    "peak_value": 32.988726979294164,
+                    "mean_value": 32.91492835272144,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-13 22:00:00",
+                    "end": "2024-03-14 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-13 23:00:00",
+                    "peak_value": 32.99996529730112,
+                    "mean_value": 32.92606285288156,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-15 12:00:00",
+                    "end": "2024-03-15 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-15 13:00:00",
+                    "peak_value": 32.99108932221888,
+                    "mean_value": 32.917268872686904,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-17 01:00:00",
+                    "end": "2024-03-17 04:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-17 02:00:00",
+                    "peak_value": 32.98078882625809,
+                    "mean_value": 32.86099649116648,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-17 16:00:00",
+                    "end": "2024-03-17 18:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-17 16:00:00",
+                    "peak_value": 34.88785588646847,
+                    "mean_value": 33.99384740669438,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-18 00:00:00",
+                    "end": "2024-03-18 00:00:00",
+                    "duration_minutes": 0.0,
+                    "peak_time": "2024-03-18 00:00:00",
+                    "peak_value": 32.81657855448567,
+                    "mean_value": 32.81657855448567,
+                    "n_points": 1
+                  },
+                  {
+                    "start": "2024-03-18 15:00:00",
+                    "end": "2024-03-18 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-18 16:00:00",
+                    "peak_value": 32.99853039010474,
+                    "mean_value": 32.924641201136346,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-20 05:00:00",
+                    "end": "2024-03-20 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-20 06:00:00",
+                    "peak_value": 32.99616126864585,
+                    "mean_value": 32.922293965255754,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-21 18:00:00",
+                    "end": "2024-03-21 21:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-21 20:00:00",
+                    "peak_value": 32.97368741855769,
+                    "mean_value": 32.86174971604434,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-23 08:00:00",
+                    "end": "2024-03-23 10:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-23 09:00:00",
+                    "peak_value": 32.99499053688867,
+                    "mean_value": 32.921134048537816,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-24 22:00:00",
+                    "end": "2024-03-25 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-24 23:00:00",
+                    "peak_value": 32.99912889252674,
+                    "mean_value": 32.92523417468537,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-26 12:00:00",
+                    "end": "2024-03-26 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-26 13:00:00",
+                    "peak_value": 32.9831550580461,
+                    "mean_value": 32.9094079040217,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-28 01:00:00",
+                    "end": "2024-03-28 03:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-28 02:00:00",
+                    "peak_value": 32.98934666922401,
+                    "mean_value": 32.915542318051386,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-29 15:00:00",
+                    "end": "2024-03-29 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-29 16:00:00",
+                    "peak_value": 32.99999141288208,
+                    "mean_value": 32.92608872721082,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-31 05:00:00",
+                    "end": "2024-03-31 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-31 06:00:00",
+                    "peak_value": 32.99052179778864,
+                    "mean_value": 32.91670659095973,
+                    "n_points": 3
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 3
+            }
+          ]
+        }
+      },
+      "agent": {
+        "status": "success",
+        "answer": "High TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using q=0.9:\nThreshold: 32.720 TECU (quantile, n=744).\nDetected intervals: 22.\n\nIntervals:\n1. 2024-03-01 08:00:00 -> 2024-03-01 11:00:00; duration=180.0 min; peak=32.980 TECU at 2024-03-01 09:00:00; mean=32.861 TECU.\n2. 2024-03-02 22:00:00 -> 2024-03-03 00:00:00; duration=120.0 min; peak=32.998 TECU at 2024-03-02 23:00:00; mean=32.924 TECU.\n3. 2024-03-04 12:00:00 -> 2024-03-04 14:00:00; duration=120.0 min; peak=32.997 TECU at 2024-03-04 13:00:00; mean=32.923 TECU.\n4. 2024-03-06 00:00:00 -> 2024-03-06 10:00:00; duration=600.0 min; peak=52.975 TECU at 2024-03-06 03:00:00; mean=51.351 TECU.\n5. 2024-03-07 15:00:00 -> 2024-03-07 17:00:00; duration=120.0 min; peak=32.995 TECU at 2024-03-07 16:00:00; mean=32.921 TECU.\n6. 2024-03-09 05:00:00 -> 2024-03-09 07:00:00; duration=120.0 min; peak=32.999 TECU at 2024-03-09 06:00:00; mean=32.925 TECU.\n7. 2024-03-10 19:00:00 -> 2024-03-10 21:00:00; duration=120.0 min; peak=32.984 TECU at 2024-03-10 20:00:00; mean=32.910 TECU.\n8. 2024-03-12 08:00:00 -> 2024-03-12 10:00:00; duration=120.0 min; peak=32.989 TECU at 2024-03-12 09:00:00; mean=32.915 TECU.\n9. 2024-03-13 22:00:00 -> 2024-03-14 00:00:00; duration=120.0 min; peak=33.000 TECU at 2024-03-13 23:00:00; mean=32.926 TECU.\n10. 2024-03-15 12:00:00 -> 2024-03-15 14:00:00; duration=120.0 min; peak=32.991 TECU at 2024-03-15 13:00:00; mean=32.917 TECU.\n11. 2024-03-17 01:00:00 -> 2024-03-17 04:00:00; duration=180.0 min; peak=32.981 TECU at 2024-03-17 02:00:00; mean=32.861 TECU.\n12. 2024-03-17 16:00:00 -> 2024-03-17 18:00:00; duration=120.0 min; peak=34.888 TECU at 2024-03-17 16:00:00; mean=33.994 TECU.\n13. 2024-03-18 00:00:00 -> 2024-03-18 00:00:00; duration=0.0 min; peak=32.817 TECU at 2024-03-18 00:00:00; mean=32.817 TECU.\n14. 2024-03-18 15:00:00 -> 2024-03-18 17:00:00; duration=120.0 min; peak=32.999 TECU at 2024-03-18 16:00:00; mean=32.925 TECU.\n15. 2024-03-20 05:00:00 -> 2024-03-20 07:00:00; duration=120.0 min; peak=32.996 TECU at 2024-03-20 06:00:00; mean=32.922 TECU.\n16. 2024-03-21 18:00:00 -> 2024-03-21 21:00:00; duration=180.0 min; peak=32.974 TECU at 2024-03-21 20:00:00; mean=32.862 TECU.\n17. 2024-03-23 08:00:00 -> 2024-03-23 10:00:00; duration=120.0 min; peak=32.995 TECU at 2024-03-23 09:00:00; mean=32.921 TECU.\n18. 2024-03-24 22:00:00 -> 2024-03-25 00:00:00; duration=120.0 min; peak=32.999 TECU at 2024-03-24 23:00:00; mean=32.925 TECU.\n19. 2024-03-26 12:00:00 -> 2024-03-26 14:00:00; duration=120.0 min; peak=32.983 TECU at 2024-03-26 13:00:00; mean=32.909 TECU.\n20. 2024-03-28 01:00:00 -> 2024-03-28 03:00:00; duration=120.0 min; peak=32.989 TECU at 2024-03-28 02:00:00; mean=32.916 TECU.\n21. 2024-03-29 15:00:00 -> 2024-03-29 17:00:00; duration=120.0 min; peak=33.000 TECU at 2024-03-29 16:00:00; mean=32.926 TECU.\n22. 2024-03-31 05:00:00 -> 2024-03-31 07:00:00; duration=120.0 min; peak=32.991 TECU at 2024-03-31 06:00:00; mean=32.917 TECU.",
+        "parsed_task": {
+          "task_type": "high_tec",
+          "dataset_ref": "smoke",
+          "region_id": "midlat_europe",
+          "region_ids": [
+            "midlat_europe"
+          ],
+          "regions": [
+            "midlat_europe"
+          ],
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "q": 0.9,
+          "window_minutes": 180,
+          "q_delta": 0.6,
+          "q_std": 0.6,
+          "include": [
+            "basic_stats",
+            "high_tec",
+            "stable_intervals"
+          ],
+          "metrics": [
+            "mean",
+            "median",
+            "min",
+            "max",
+            "std",
+            "p90",
+            "p95"
+          ],
+          "raw_query": "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+        },
+        "tool_results": {
+          "timeseries": {
+            "series_id": "series_e87e837247",
+            "metadata": {
+              "series_id": "series_e87e837247",
+              "dataset_ref": "smoke",
+              "region_id": "midlat_europe",
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "n_points": 744,
+              "finite_points": 744,
+              "freq": null,
+              "min_value": 17.00007834759437,
+              "max_value": 52.97463835423039,
+              "mean_value": 25.552842110134385,
+              "approx_q90": 32.72001043550788
+            }
+          },
+          "threshold": {
+            "threshold_id": "thr_3c630b1fba",
+            "series_id": "series_e87e837247",
+            "method": "quantile",
+            "q": 0.9,
+            "value": 32.72001043550788,
+            "n_points_used": 744
+          },
+          "intervals": {
+            "series_id": "series_e87e837247",
+            "threshold_id": "thr_3c630b1fba",
+            "threshold_value": 32.72001043550788,
+            "n_intervals": 22,
+            "intervals": [
+              {
+                "start": "2024-03-01 08:00:00",
+                "end": "2024-03-01 11:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-01 09:00:00",
+                "peak_value": 32.97995989283243,
+                "mean_value": 32.86115099895326,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-02 22:00:00",
+                "end": "2024-03-03 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-02 23:00:00",
+                "peak_value": 32.99829465131377,
+                "mean_value": 32.92440764006394,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-04 12:00:00",
+                "end": "2024-03-04 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-04 13:00:00",
+                "peak_value": 32.99651931720703,
+                "mean_value": 32.922648706219604,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-06 00:00:00",
+                "end": "2024-03-06 10:00:00",
+                "duration_minutes": 600.0,
+                "peak_time": "2024-03-06 03:00:00",
+                "peak_value": 52.97463835423039,
+                "mean_value": 51.35085776223248,
+                "n_points": 11
+              },
+              {
+                "start": "2024-03-07 15:00:00",
+                "end": "2024-03-07 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-07 16:00:00",
+                "peak_value": 32.99456276624078,
+                "mean_value": 32.920710229569146,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-09 05:00:00",
+                "end": "2024-03-09 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-09 06:00:00",
+                "peak_value": 32.99929488085814,
+                "mean_value": 32.92539862964219,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-10 19:00:00",
+                "end": "2024-03-10 21:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-10 20:00:00",
+                "peak_value": 32.98391438801273,
+                "mean_value": 32.91016021941531,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-12 08:00:00",
+                "end": "2024-03-12 10:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-12 09:00:00",
+                "peak_value": 32.988726979294164,
+                "mean_value": 32.91492835272144,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-13 22:00:00",
+                "end": "2024-03-14 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-13 23:00:00",
+                "peak_value": 32.99996529730112,
+                "mean_value": 32.92606285288156,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-15 12:00:00",
+                "end": "2024-03-15 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-15 13:00:00",
+                "peak_value": 32.99108932221888,
+                "mean_value": 32.917268872686904,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-17 01:00:00",
+                "end": "2024-03-17 04:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-17 02:00:00",
+                "peak_value": 32.98078882625809,
+                "mean_value": 32.86099649116648,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-17 16:00:00",
+                "end": "2024-03-17 18:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-17 16:00:00",
+                "peak_value": 34.88785588646847,
+                "mean_value": 33.99384740669438,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-18 00:00:00",
+                "end": "2024-03-18 00:00:00",
+                "duration_minutes": 0.0,
+                "peak_time": "2024-03-18 00:00:00",
+                "peak_value": 32.81657855448567,
+                "mean_value": 32.81657855448567,
+                "n_points": 1
+              },
+              {
+                "start": "2024-03-18 15:00:00",
+                "end": "2024-03-18 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-18 16:00:00",
+                "peak_value": 32.99853039010474,
+                "mean_value": 32.924641201136346,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-20 05:00:00",
+                "end": "2024-03-20 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-20 06:00:00",
+                "peak_value": 32.99616126864585,
+                "mean_value": 32.922293965255754,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-21 18:00:00",
+                "end": "2024-03-21 21:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-21 20:00:00",
+                "peak_value": 32.97368741855769,
+                "mean_value": 32.86174971604434,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-23 08:00:00",
+                "end": "2024-03-23 10:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-23 09:00:00",
+                "peak_value": 32.99499053688867,
+                "mean_value": 32.921134048537816,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-24 22:00:00",
+                "end": "2024-03-25 00:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-24 23:00:00",
+                "peak_value": 32.99912889252674,
+                "mean_value": 32.92523417468537,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-26 12:00:00",
+                "end": "2024-03-26 14:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-26 13:00:00",
+                "peak_value": 32.9831550580461,
+                "mean_value": 32.9094079040217,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-28 01:00:00",
+                "end": "2024-03-28 03:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-28 02:00:00",
+                "peak_value": 32.98934666922401,
+                "mean_value": 32.915542318051386,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-29 15:00:00",
+                "end": "2024-03-29 17:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-29 16:00:00",
+                "peak_value": 32.99999141288208,
+                "mean_value": 32.92608872721082,
+                "n_points": 3
+              },
+              {
+                "start": "2024-03-31 05:00:00",
+                "end": "2024-03-31 07:00:00",
+                "duration_minutes": 120.0,
+                "peak_time": "2024-03-31 06:00:00",
+                "peak_value": 32.99052179778864,
+                "mean_value": 32.91670659095973,
+                "n_points": 3
+              }
+            ]
+          }
+        },
+        "trace": {
+          "run_id": "run_0472bd3ceb",
+          "n_calls": 3,
+          "calls": [
+            {
+              "call_id": "call_78fc54b32d",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.010816199999680975,
+              "output": {
+                "series_id": "series_e87e837247",
+                "metadata": {
+                  "series_id": "series_e87e837247",
+                  "dataset_ref": "smoke",
+                  "region_id": "midlat_europe",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 17.00007834759437,
+                  "max_value": 52.97463835423039,
+                  "mean_value": 25.552842110134385,
+                  "approx_q90": 32.72001043550788
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 1
+            },
+            {
+              "call_id": "call_9e5a9404d8",
+              "tool_name": "tec_compute_high_threshold",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "method": "quantile",
+                "q": 0.9
+              },
+              "status": "ok",
+              "latency_sec": 0.0011414000000513624,
+              "output": {
+                "threshold_id": "thr_3c630b1fba",
+                "series_id": "series_e87e837247",
+                "method": "quantile",
+                "q": 0.9,
+                "value": 32.72001043550788,
+                "n_points_used": 744
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 2
+            },
+            {
+              "call_id": "call_f5540374e5",
+              "tool_name": "tec_detect_high_intervals",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "threshold_id": "thr_3c630b1fba",
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60
+              },
+              "status": "ok",
+              "latency_sec": 0.023322700000790064,
+              "output": {
+                "series_id": "series_e87e837247",
+                "threshold_id": "thr_3c630b1fba",
+                "threshold_value": 32.72001043550788,
+                "n_intervals": 22,
+                "intervals": [
+                  {
+                    "start": "2024-03-01 08:00:00",
+                    "end": "2024-03-01 11:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-01 09:00:00",
+                    "peak_value": 32.97995989283243,
+                    "mean_value": 32.86115099895326,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-02 22:00:00",
+                    "end": "2024-03-03 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-02 23:00:00",
+                    "peak_value": 32.99829465131377,
+                    "mean_value": 32.92440764006394,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-04 12:00:00",
+                    "end": "2024-03-04 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-04 13:00:00",
+                    "peak_value": 32.99651931720703,
+                    "mean_value": 32.922648706219604,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-06 00:00:00",
+                    "end": "2024-03-06 10:00:00",
+                    "duration_minutes": 600.0,
+                    "peak_time": "2024-03-06 03:00:00",
+                    "peak_value": 52.97463835423039,
+                    "mean_value": 51.35085776223248,
+                    "n_points": 11
+                  },
+                  {
+                    "start": "2024-03-07 15:00:00",
+                    "end": "2024-03-07 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-07 16:00:00",
+                    "peak_value": 32.99456276624078,
+                    "mean_value": 32.920710229569146,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-09 05:00:00",
+                    "end": "2024-03-09 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-09 06:00:00",
+                    "peak_value": 32.99929488085814,
+                    "mean_value": 32.92539862964219,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-10 19:00:00",
+                    "end": "2024-03-10 21:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-10 20:00:00",
+                    "peak_value": 32.98391438801273,
+                    "mean_value": 32.91016021941531,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-12 08:00:00",
+                    "end": "2024-03-12 10:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-12 09:00:00",
+                    "peak_value": 32.988726979294164,
+                    "mean_value": 32.91492835272144,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-13 22:00:00",
+                    "end": "2024-03-14 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-13 23:00:00",
+                    "peak_value": 32.99996529730112,
+                    "mean_value": 32.92606285288156,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-15 12:00:00",
+                    "end": "2024-03-15 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-15 13:00:00",
+                    "peak_value": 32.99108932221888,
+                    "mean_value": 32.917268872686904,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-17 01:00:00",
+                    "end": "2024-03-17 04:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-17 02:00:00",
+                    "peak_value": 32.98078882625809,
+                    "mean_value": 32.86099649116648,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-17 16:00:00",
+                    "end": "2024-03-17 18:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-17 16:00:00",
+                    "peak_value": 34.88785588646847,
+                    "mean_value": 33.99384740669438,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-18 00:00:00",
+                    "end": "2024-03-18 00:00:00",
+                    "duration_minutes": 0.0,
+                    "peak_time": "2024-03-18 00:00:00",
+                    "peak_value": 32.81657855448567,
+                    "mean_value": 32.81657855448567,
+                    "n_points": 1
+                  },
+                  {
+                    "start": "2024-03-18 15:00:00",
+                    "end": "2024-03-18 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-18 16:00:00",
+                    "peak_value": 32.99853039010474,
+                    "mean_value": 32.924641201136346,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-20 05:00:00",
+                    "end": "2024-03-20 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-20 06:00:00",
+                    "peak_value": 32.99616126864585,
+                    "mean_value": 32.922293965255754,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-21 18:00:00",
+                    "end": "2024-03-21 21:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-21 20:00:00",
+                    "peak_value": 32.97368741855769,
+                    "mean_value": 32.86174971604434,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-23 08:00:00",
+                    "end": "2024-03-23 10:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-23 09:00:00",
+                    "peak_value": 32.99499053688867,
+                    "mean_value": 32.921134048537816,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-24 22:00:00",
+                    "end": "2024-03-25 00:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-24 23:00:00",
+                    "peak_value": 32.99912889252674,
+                    "mean_value": 32.92523417468537,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-26 12:00:00",
+                    "end": "2024-03-26 14:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-26 13:00:00",
+                    "peak_value": 32.9831550580461,
+                    "mean_value": 32.9094079040217,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-28 01:00:00",
+                    "end": "2024-03-28 03:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-28 02:00:00",
+                    "peak_value": 32.98934666922401,
+                    "mean_value": 32.915542318051386,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-29 15:00:00",
+                    "end": "2024-03-29 17:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-29 16:00:00",
+                    "peak_value": 32.99999141288208,
+                    "mean_value": 32.92608872721082,
+                    "n_points": 3
+                  },
+                  {
+                    "start": "2024-03-31 05:00:00",
+                    "end": "2024-03-31 07:00:00",
+                    "duration_minutes": 120.0,
+                    "peak_time": "2024-03-31 06:00:00",
+                    "peak_value": 32.99052179778864,
+                    "mean_value": 32.91670659095973,
+                    "n_points": 3
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 3
+            }
+          ]
+        },
+        "orchestration_steps": [
+          {
+            "node": "rule_based_single_agent",
+            "action": "parse_route_execute_and_report",
+            "details": {
+              "task_type": "high_tec",
+              "region_id": "midlat_europe",
+              "region_ids": [
+                "midlat_europe"
+              ],
+              "regions": [
+                "midlat_europe"
+              ],
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "q": 0.9,
+              "window_minutes": 180,
+              "q_delta": 0.6,
+              "q_std": 0.6,
+              "include": [
+                "basic_stats",
+                "high_tec",
+                "stable_intervals"
+              ],
+              "metrics": [
+                "mean",
+                "median",
+                "min",
+                "max",
+                "std",
+                "p90",
+                "p95"
+              ],
+              "selected_worker": "single_agent"
+            }
+          }
+        ],
+        "error": null
+      },
+      "metrics": {
+        "task_id": "smoke_hightec_midlat_europe_march_2024",
+        "task_type": "high_tec",
+        "success": true,
+        "metrics": {
+          "threshold_abs_error": 0.0,
+          "threshold_exact_match": true,
+          "agent_n_intervals": 22,
+          "gold_n_intervals": 22,
+          "interval_count_error": 0,
+          "interval_count_match": true,
+          "agent_global_peak_value": 52.97463835423039,
+          "gold_global_peak_value": 52.97463835423039,
+          "global_peak_abs_error": 0.0,
+          "global_peak_match": true,
+          "top_interval_start_match": true,
+          "top_interval_end_match": true,
+          "task_type_match": true,
+          "start_date_match": true,
+          "end_date_match": true,
+          "date_parse_match": true,
+          "region_parse_match": true,
+          "q_abs_error": 0.0,
+          "orchestration_step_count": 1,
+          "orchestrator_step_count": 0,
+          "worker_step_count": 0,
+          "reporter_step_count": 0,
+          "handoff_count": 0,
+          "selected_worker": "single_agent",
+          "expected_worker": "high_tec_worker",
+          "route_correct": true,
+          "orchestration_nodes": [
+            "rule_based_single_agent"
+          ],
+          "data_agent_called": false,
+          "math_agent_called": false,
+          "analysis_agent_called": false,
+          "report_agent_called": false,
+          "required_role_agents_called": false,
+          "role_agent_order": [
+            "rule_based_single_agent"
+          ],
+          "expected_role_agent_order": [
+            "orchestrator",
+            "data_agent",
+            "math_agent",
+            "analysis_agent",
+            "report_agent"
+          ],
+          "role_agent_order_match": false,
+          "artifact_flow_valid": false,
+          "data_artifact_available": false,
+          "math_artifact_available": false,
+          "analysis_artifact_available": false,
+          "report_grounded_in_artifacts": false,
+          "tool_call_count": 3,
+          "tool_error_count": 0,
+          "total_tool_latency_sec": 0.0352803000005224,
+          "tool_sequence": [
+            "tec_get_timeseries",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals"
+          ],
+          "expected_tool_sequence": [
+            "tec_get_timeseries",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals"
+          ],
+          "tool_sequence_match": true,
+          "legacy_report_tool_used": false,
+          "legacy_report_tool_absent": true,
+          "unnecessary_tool_call_count": 0,
+          "invalid_tool_name_count": 0,
+          "schema_validation_error_count": 0,
+          "tool_runtime_error_count": 0,
+          "tool_success_rate": 1.0
+        },
+        "errors": []
+      }
+    },
+    {
+      "task": {
+        "task_id": "smoke_hightec_highlat_north_march_2024",
+        "query": "Find high TEC intervals for highlat_north in March 2024 with q=0.9",
+        "task_type": "high_tec",
+        "dataset_ref": "smoke",
+        "start": "2024-03-01",
+        "end": "2024-04-01",
+        "region_id": "highlat_north",
+        "region_ids": [
+          "highlat_north"
+        ],
+        "q": 0.9,
+        "params": {},
+        "expected_tool_sequence": [
+          "tec_get_timeseries",
+          "tec_compute_high_threshold",
+          "tec_detect_high_intervals"
+        ],
+        "expected_worker": "role_based_workflow",
+        "description": "Smoke high-TEC task for the synthetic northern high-latitude series."
+      },
+      "gold": {
+        "task_id": "smoke_hightec_highlat_north_march_2024",
+        "task_type": "high_tec",
+        "status": "success",
+        "result": {
+          "task_id": "smoke_hightec_highlat_north_march_2024",
+          "task_type": "high_tec",
+          "dataset_ref": "smoke",
+          "region_id": "highlat_north",
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "q": 0.9,
+          "series": {
+            "series_id": "series_81e9f6fd40",
+            "metadata": {
+              "series_id": "series_81e9f6fd40",
+              "dataset_ref": "smoke",
+              "region_id": "highlat_north",
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "n_points": 744,
+              "finite_points": 744,
+              "freq": null,
+              "min_value": 9.000016488957225,
+              "max_value": 21.417853022062918,
+              "mean_value": 12.088417739872996,
+              "approx_q90": 14.87780656529111
+            }
+          },
+          "threshold": {
+            "threshold_id": "thr_f962b20c5c",
+            "series_id": "series_81e9f6fd40",
+            "method": "quantile",
+            "q": 0.9,
+            "value": 14.87780656529111,
+            "n_points_used": 744
+          },
+          "intervals": {
+            "series_id": "series_81e9f6fd40",
+            "threshold_id": "thr_f962b20c5c",
+            "threshold_value": 14.87780656529111,
+            "n_intervals": 16,
+            "intervals": [
+              {
+                "start": "2024-03-01 11:00:00",
+                "end": "2024-03-01 14:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-01 13:00:00",
+                "peak_value": 14.995594021619494,
+                "mean_value": 14.970678998280734,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-03 13:00:00",
+                "end": "2024-03-03 17:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-03 15:00:00",
+                "peak_value": 14.999337366829348,
+                "mean_value": 14.952679781455345,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-05 15:00:00",
+                "end": "2024-03-05 19:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-05 17:00:00",
+                "peak_value": 14.99977795105369,
+                "mean_value": 14.95311351196717,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-07 18:00:00",
+                "end": "2024-03-07 21:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-07 19:00:00",
+                "peak_value": 14.996915289137238,
+                "mean_value": 14.970344474145113,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-09 08:00:00",
+                "end": "2024-03-09 13:00:00",
+                "duration_minutes": 300.0,
+                "peak_time": "2024-03-09 13:00:00",
+                "peak_value": 21.417853022062918,
+                "mean_value": 20.524234710208894,
+                "n_points": 6
+              },
+              {
+                "start": "2024-03-09 20:00:00",
+                "end": "2024-03-09 23:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-09 22:00:00",
+                "peak_value": 14.996762444366473,
+                "mean_value": 14.970399196689995,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-11 22:00:00",
+                "end": "2024-03-12 02:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-12 00:00:00",
+                "peak_value": 14.9997355803218,
+                "mean_value": 14.953071800352877,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-14 00:00:00",
+                "end": "2024-03-14 04:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-14 02:00:00",
+                "peak_value": 14.999405516793438,
+                "mean_value": 14.952746871281018,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-16 03:00:00",
+                "end": "2024-03-16 06:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-16 04:00:00",
+                "peak_value": 14.99577261723531,
+                "mean_value": 14.970649805337388,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-18 05:00:00",
+                "end": "2024-03-18 08:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-18 07:00:00",
+                "peak_value": 14.997751282159845,
+                "mean_value": 14.969941389998137,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-20 07:00:00",
+                "end": "2024-03-20 11:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-20 09:00:00",
+                "peak_value": 14.999954030691544,
+                "mean_value": 14.953286852516438,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-22 09:00:00",
+                "end": "2024-03-22 13:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-22 11:00:00",
+                "peak_value": 14.998853339189967,
+                "mean_value": 14.952203283332704,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-24 12:00:00",
+                "end": "2024-03-24 15:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-24 13:00:00",
+                "peak_value": 14.994450419696475,
+                "mean_value": 14.970777116410485,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-26 14:00:00",
+                "end": "2024-03-26 18:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-26 16:00:00",
+                "peak_value": 14.998560475742194,
+                "mean_value": 14.951914975658303,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-28 16:00:00",
+                "end": "2024-03-28 20:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-28 18:00:00",
+                "peak_value": 14.999992704847646,
+                "mean_value": 14.953324925058746,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-30 18:00:00",
+                "end": "2024-03-30 22:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-30 20:00:00",
+                "peak_value": 14.998121451333253,
+                "mean_value": 14.95148278069745,
+                "n_points": 5
+              }
+            ]
+          }
+        },
+        "error": null,
+        "trace": {
+          "run_id": "gold_smoke_hightec_highlat_north_march_2024",
+          "n_calls": 3,
+          "calls": [
+            {
+              "call_id": "call_d488f0bc83",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.008657200000016019,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "metadata": {
+                  "series_id": "series_81e9f6fd40",
+                  "dataset_ref": "smoke",
+                  "region_id": "highlat_north",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 9.000016488957225,
+                  "max_value": 21.417853022062918,
+                  "mean_value": 12.088417739872996,
+                  "approx_q90": 14.87780656529111
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 1
+            },
+            {
+              "call_id": "call_5f1e03d97e",
+              "tool_name": "tec_compute_high_threshold",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "method": "quantile",
+                "q": 0.9
+              },
+              "status": "ok",
+              "latency_sec": 0.0008030000008147908,
+              "output": {
+                "threshold_id": "thr_f962b20c5c",
+                "series_id": "series_81e9f6fd40",
+                "method": "quantile",
+                "q": 0.9,
+                "value": 14.87780656529111,
+                "n_points_used": 744
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 2
+            },
+            {
+              "call_id": "call_9a6b3a77c0",
+              "tool_name": "tec_detect_high_intervals",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "threshold_id": "thr_f962b20c5c",
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60
+              },
+              "status": "ok",
+              "latency_sec": 0.013553300001149182,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "threshold_id": "thr_f962b20c5c",
+                "threshold_value": 14.87780656529111,
+                "n_intervals": 16,
+                "intervals": [
+                  {
+                    "start": "2024-03-01 11:00:00",
+                    "end": "2024-03-01 14:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-01 13:00:00",
+                    "peak_value": 14.995594021619494,
+                    "mean_value": 14.970678998280734,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-03 13:00:00",
+                    "end": "2024-03-03 17:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-03 15:00:00",
+                    "peak_value": 14.999337366829348,
+                    "mean_value": 14.952679781455345,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-05 15:00:00",
+                    "end": "2024-03-05 19:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-05 17:00:00",
+                    "peak_value": 14.99977795105369,
+                    "mean_value": 14.95311351196717,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-07 18:00:00",
+                    "end": "2024-03-07 21:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-07 19:00:00",
+                    "peak_value": 14.996915289137238,
+                    "mean_value": 14.970344474145113,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-09 08:00:00",
+                    "end": "2024-03-09 13:00:00",
+                    "duration_minutes": 300.0,
+                    "peak_time": "2024-03-09 13:00:00",
+                    "peak_value": 21.417853022062918,
+                    "mean_value": 20.524234710208894,
+                    "n_points": 6
+                  },
+                  {
+                    "start": "2024-03-09 20:00:00",
+                    "end": "2024-03-09 23:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-09 22:00:00",
+                    "peak_value": 14.996762444366473,
+                    "mean_value": 14.970399196689995,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-11 22:00:00",
+                    "end": "2024-03-12 02:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-12 00:00:00",
+                    "peak_value": 14.9997355803218,
+                    "mean_value": 14.953071800352877,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-14 00:00:00",
+                    "end": "2024-03-14 04:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-14 02:00:00",
+                    "peak_value": 14.999405516793438,
+                    "mean_value": 14.952746871281018,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-16 03:00:00",
+                    "end": "2024-03-16 06:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-16 04:00:00",
+                    "peak_value": 14.99577261723531,
+                    "mean_value": 14.970649805337388,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-18 05:00:00",
+                    "end": "2024-03-18 08:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-18 07:00:00",
+                    "peak_value": 14.997751282159845,
+                    "mean_value": 14.969941389998137,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-20 07:00:00",
+                    "end": "2024-03-20 11:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-20 09:00:00",
+                    "peak_value": 14.999954030691544,
+                    "mean_value": 14.953286852516438,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-22 09:00:00",
+                    "end": "2024-03-22 13:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-22 11:00:00",
+                    "peak_value": 14.998853339189967,
+                    "mean_value": 14.952203283332704,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-24 12:00:00",
+                    "end": "2024-03-24 15:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-24 13:00:00",
+                    "peak_value": 14.994450419696475,
+                    "mean_value": 14.970777116410485,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-26 14:00:00",
+                    "end": "2024-03-26 18:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-26 16:00:00",
+                    "peak_value": 14.998560475742194,
+                    "mean_value": 14.951914975658303,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-28 16:00:00",
+                    "end": "2024-03-28 20:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-28 18:00:00",
+                    "peak_value": 14.999992704847646,
+                    "mean_value": 14.953324925058746,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-30 18:00:00",
+                    "end": "2024-03-30 22:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-30 20:00:00",
+                    "peak_value": 14.998121451333253,
+                    "mean_value": 14.95148278069745,
+                    "n_points": 5
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 3
+            }
+          ]
+        }
+      },
+      "agent": {
+        "status": "success",
+        "answer": "High TEC intervals for highlat_north from 2024-03-01 to 2024-04-01 using q=0.9:\nThreshold: 14.878 TECU (quantile, n=744).\nDetected intervals: 16.\n\nIntervals:\n1. 2024-03-01 11:00:00 -> 2024-03-01 14:00:00; duration=180.0 min; peak=14.996 TECU at 2024-03-01 13:00:00; mean=14.971 TECU.\n2. 2024-03-03 13:00:00 -> 2024-03-03 17:00:00; duration=240.0 min; peak=14.999 TECU at 2024-03-03 15:00:00; mean=14.953 TECU.\n3. 2024-03-05 15:00:00 -> 2024-03-05 19:00:00; duration=240.0 min; peak=15.000 TECU at 2024-03-05 17:00:00; mean=14.953 TECU.\n4. 2024-03-07 18:00:00 -> 2024-03-07 21:00:00; duration=180.0 min; peak=14.997 TECU at 2024-03-07 19:00:00; mean=14.970 TECU.\n5. 2024-03-09 08:00:00 -> 2024-03-09 13:00:00; duration=300.0 min; peak=21.418 TECU at 2024-03-09 13:00:00; mean=20.524 TECU.\n6. 2024-03-09 20:00:00 -> 2024-03-09 23:00:00; duration=180.0 min; peak=14.997 TECU at 2024-03-09 22:00:00; mean=14.970 TECU.\n7. 2024-03-11 22:00:00 -> 2024-03-12 02:00:00; duration=240.0 min; peak=15.000 TECU at 2024-03-12 00:00:00; mean=14.953 TECU.\n8. 2024-03-14 00:00:00 -> 2024-03-14 04:00:00; duration=240.0 min; peak=14.999 TECU at 2024-03-14 02:00:00; mean=14.953 TECU.\n9. 2024-03-16 03:00:00 -> 2024-03-16 06:00:00; duration=180.0 min; peak=14.996 TECU at 2024-03-16 04:00:00; mean=14.971 TECU.\n10. 2024-03-18 05:00:00 -> 2024-03-18 08:00:00; duration=180.0 min; peak=14.998 TECU at 2024-03-18 07:00:00; mean=14.970 TECU.\n11. 2024-03-20 07:00:00 -> 2024-03-20 11:00:00; duration=240.0 min; peak=15.000 TECU at 2024-03-20 09:00:00; mean=14.953 TECU.\n12. 2024-03-22 09:00:00 -> 2024-03-22 13:00:00; duration=240.0 min; peak=14.999 TECU at 2024-03-22 11:00:00; mean=14.952 TECU.\n13. 2024-03-24 12:00:00 -> 2024-03-24 15:00:00; duration=180.0 min; peak=14.994 TECU at 2024-03-24 13:00:00; mean=14.971 TECU.\n14. 2024-03-26 14:00:00 -> 2024-03-26 18:00:00; duration=240.0 min; peak=14.999 TECU at 2024-03-26 16:00:00; mean=14.952 TECU.\n15. 2024-03-28 16:00:00 -> 2024-03-28 20:00:00; duration=240.0 min; peak=15.000 TECU at 2024-03-28 18:00:00; mean=14.953 TECU.\n16. 2024-03-30 18:00:00 -> 2024-03-30 22:00:00; duration=240.0 min; peak=14.998 TECU at 2024-03-30 20:00:00; mean=14.951 TECU.",
+        "parsed_task": {
+          "task_type": "high_tec",
+          "dataset_ref": "smoke",
+          "region_id": "highlat_north",
+          "region_ids": [
+            "highlat_north"
+          ],
+          "regions": [
+            "highlat_north"
+          ],
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "q": 0.9,
+          "window_minutes": 180,
+          "q_delta": 0.6,
+          "q_std": 0.6,
+          "include": [
+            "basic_stats",
+            "high_tec",
+            "stable_intervals"
+          ],
+          "metrics": [
+            "mean",
+            "median",
+            "min",
+            "max",
+            "std",
+            "p90",
+            "p95"
+          ],
+          "raw_query": "Find high TEC intervals for highlat_north in March 2024 with q=0.9"
+        },
+        "tool_results": {
+          "timeseries": {
+            "series_id": "series_81e9f6fd40",
+            "metadata": {
+              "series_id": "series_81e9f6fd40",
+              "dataset_ref": "smoke",
+              "region_id": "highlat_north",
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "n_points": 744,
+              "finite_points": 744,
+              "freq": null,
+              "min_value": 9.000016488957225,
+              "max_value": 21.417853022062918,
+              "mean_value": 12.088417739872996,
+              "approx_q90": 14.87780656529111
+            }
+          },
+          "threshold": {
+            "threshold_id": "thr_f962b20c5c",
+            "series_id": "series_81e9f6fd40",
+            "method": "quantile",
+            "q": 0.9,
+            "value": 14.87780656529111,
+            "n_points_used": 744
+          },
+          "intervals": {
+            "series_id": "series_81e9f6fd40",
+            "threshold_id": "thr_f962b20c5c",
+            "threshold_value": 14.87780656529111,
+            "n_intervals": 16,
+            "intervals": [
+              {
+                "start": "2024-03-01 11:00:00",
+                "end": "2024-03-01 14:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-01 13:00:00",
+                "peak_value": 14.995594021619494,
+                "mean_value": 14.970678998280734,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-03 13:00:00",
+                "end": "2024-03-03 17:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-03 15:00:00",
+                "peak_value": 14.999337366829348,
+                "mean_value": 14.952679781455345,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-05 15:00:00",
+                "end": "2024-03-05 19:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-05 17:00:00",
+                "peak_value": 14.99977795105369,
+                "mean_value": 14.95311351196717,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-07 18:00:00",
+                "end": "2024-03-07 21:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-07 19:00:00",
+                "peak_value": 14.996915289137238,
+                "mean_value": 14.970344474145113,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-09 08:00:00",
+                "end": "2024-03-09 13:00:00",
+                "duration_minutes": 300.0,
+                "peak_time": "2024-03-09 13:00:00",
+                "peak_value": 21.417853022062918,
+                "mean_value": 20.524234710208894,
+                "n_points": 6
+              },
+              {
+                "start": "2024-03-09 20:00:00",
+                "end": "2024-03-09 23:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-09 22:00:00",
+                "peak_value": 14.996762444366473,
+                "mean_value": 14.970399196689995,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-11 22:00:00",
+                "end": "2024-03-12 02:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-12 00:00:00",
+                "peak_value": 14.9997355803218,
+                "mean_value": 14.953071800352877,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-14 00:00:00",
+                "end": "2024-03-14 04:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-14 02:00:00",
+                "peak_value": 14.999405516793438,
+                "mean_value": 14.952746871281018,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-16 03:00:00",
+                "end": "2024-03-16 06:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-16 04:00:00",
+                "peak_value": 14.99577261723531,
+                "mean_value": 14.970649805337388,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-18 05:00:00",
+                "end": "2024-03-18 08:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-18 07:00:00",
+                "peak_value": 14.997751282159845,
+                "mean_value": 14.969941389998137,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-20 07:00:00",
+                "end": "2024-03-20 11:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-20 09:00:00",
+                "peak_value": 14.999954030691544,
+                "mean_value": 14.953286852516438,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-22 09:00:00",
+                "end": "2024-03-22 13:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-22 11:00:00",
+                "peak_value": 14.998853339189967,
+                "mean_value": 14.952203283332704,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-24 12:00:00",
+                "end": "2024-03-24 15:00:00",
+                "duration_minutes": 180.0,
+                "peak_time": "2024-03-24 13:00:00",
+                "peak_value": 14.994450419696475,
+                "mean_value": 14.970777116410485,
+                "n_points": 4
+              },
+              {
+                "start": "2024-03-26 14:00:00",
+                "end": "2024-03-26 18:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-26 16:00:00",
+                "peak_value": 14.998560475742194,
+                "mean_value": 14.951914975658303,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-28 16:00:00",
+                "end": "2024-03-28 20:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-28 18:00:00",
+                "peak_value": 14.999992704847646,
+                "mean_value": 14.953324925058746,
+                "n_points": 5
+              },
+              {
+                "start": "2024-03-30 18:00:00",
+                "end": "2024-03-30 22:00:00",
+                "duration_minutes": 240.0,
+                "peak_time": "2024-03-30 20:00:00",
+                "peak_value": 14.998121451333253,
+                "mean_value": 14.95148278069745,
+                "n_points": 5
+              }
+            ]
+          }
+        },
+        "trace": {
+          "run_id": "run_0364da1c2d",
+          "n_calls": 3,
+          "calls": [
+            {
+              "call_id": "call_1e8fc68082",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.010329599999749917,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "metadata": {
+                  "series_id": "series_81e9f6fd40",
+                  "dataset_ref": "smoke",
+                  "region_id": "highlat_north",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 9.000016488957225,
+                  "max_value": 21.417853022062918,
+                  "mean_value": 12.088417739872996,
+                  "approx_q90": 14.87780656529111
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 1
+            },
+            {
+              "call_id": "call_0df7c843b2",
+              "tool_name": "tec_compute_high_threshold",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "method": "quantile",
+                "q": 0.9
+              },
+              "status": "ok",
+              "latency_sec": 0.0014795000006415648,
+              "output": {
+                "threshold_id": "thr_f962b20c5c",
+                "series_id": "series_81e9f6fd40",
+                "method": "quantile",
+                "q": 0.9,
+                "value": 14.87780656529111,
+                "n_points_used": 744
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 2
+            },
+            {
+              "call_id": "call_372764f6ab",
+              "tool_name": "tec_detect_high_intervals",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "threshold_id": "thr_f962b20c5c",
+                "min_duration_minutes": 0,
+                "merge_gap_minutes": 60
+              },
+              "status": "ok",
+              "latency_sec": 0.013201300000218907,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "threshold_id": "thr_f962b20c5c",
+                "threshold_value": 14.87780656529111,
+                "n_intervals": 16,
+                "intervals": [
+                  {
+                    "start": "2024-03-01 11:00:00",
+                    "end": "2024-03-01 14:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-01 13:00:00",
+                    "peak_value": 14.995594021619494,
+                    "mean_value": 14.970678998280734,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-03 13:00:00",
+                    "end": "2024-03-03 17:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-03 15:00:00",
+                    "peak_value": 14.999337366829348,
+                    "mean_value": 14.952679781455345,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-05 15:00:00",
+                    "end": "2024-03-05 19:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-05 17:00:00",
+                    "peak_value": 14.99977795105369,
+                    "mean_value": 14.95311351196717,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-07 18:00:00",
+                    "end": "2024-03-07 21:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-07 19:00:00",
+                    "peak_value": 14.996915289137238,
+                    "mean_value": 14.970344474145113,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-09 08:00:00",
+                    "end": "2024-03-09 13:00:00",
+                    "duration_minutes": 300.0,
+                    "peak_time": "2024-03-09 13:00:00",
+                    "peak_value": 21.417853022062918,
+                    "mean_value": 20.524234710208894,
+                    "n_points": 6
+                  },
+                  {
+                    "start": "2024-03-09 20:00:00",
+                    "end": "2024-03-09 23:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-09 22:00:00",
+                    "peak_value": 14.996762444366473,
+                    "mean_value": 14.970399196689995,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-11 22:00:00",
+                    "end": "2024-03-12 02:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-12 00:00:00",
+                    "peak_value": 14.9997355803218,
+                    "mean_value": 14.953071800352877,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-14 00:00:00",
+                    "end": "2024-03-14 04:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-14 02:00:00",
+                    "peak_value": 14.999405516793438,
+                    "mean_value": 14.952746871281018,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-16 03:00:00",
+                    "end": "2024-03-16 06:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-16 04:00:00",
+                    "peak_value": 14.99577261723531,
+                    "mean_value": 14.970649805337388,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-18 05:00:00",
+                    "end": "2024-03-18 08:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-18 07:00:00",
+                    "peak_value": 14.997751282159845,
+                    "mean_value": 14.969941389998137,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-20 07:00:00",
+                    "end": "2024-03-20 11:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-20 09:00:00",
+                    "peak_value": 14.999954030691544,
+                    "mean_value": 14.953286852516438,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-22 09:00:00",
+                    "end": "2024-03-22 13:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-22 11:00:00",
+                    "peak_value": 14.998853339189967,
+                    "mean_value": 14.952203283332704,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-24 12:00:00",
+                    "end": "2024-03-24 15:00:00",
+                    "duration_minutes": 180.0,
+                    "peak_time": "2024-03-24 13:00:00",
+                    "peak_value": 14.994450419696475,
+                    "mean_value": 14.970777116410485,
+                    "n_points": 4
+                  },
+                  {
+                    "start": "2024-03-26 14:00:00",
+                    "end": "2024-03-26 18:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-26 16:00:00",
+                    "peak_value": 14.998560475742194,
+                    "mean_value": 14.951914975658303,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-28 16:00:00",
+                    "end": "2024-03-28 20:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-28 18:00:00",
+                    "peak_value": 14.999992704847646,
+                    "mean_value": 14.953324925058746,
+                    "n_points": 5
+                  },
+                  {
+                    "start": "2024-03-30 18:00:00",
+                    "end": "2024-03-30 22:00:00",
+                    "duration_minutes": 240.0,
+                    "peak_time": "2024-03-30 20:00:00",
+                    "peak_value": 14.998121451333253,
+                    "mean_value": 14.95148278069745,
+                    "n_points": 5
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 3
+            }
+          ]
+        },
+        "orchestration_steps": [
+          {
+            "node": "rule_based_single_agent",
+            "action": "parse_route_execute_and_report",
+            "details": {
+              "task_type": "high_tec",
+              "region_id": "highlat_north",
+              "region_ids": [
+                "highlat_north"
+              ],
+              "regions": [
+                "highlat_north"
+              ],
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "q": 0.9,
+              "window_minutes": 180,
+              "q_delta": 0.6,
+              "q_std": 0.6,
+              "include": [
+                "basic_stats",
+                "high_tec",
+                "stable_intervals"
+              ],
+              "metrics": [
+                "mean",
+                "median",
+                "min",
+                "max",
+                "std",
+                "p90",
+                "p95"
+              ],
+              "selected_worker": "single_agent"
+            }
+          }
+        ],
+        "error": null
+      },
+      "metrics": {
+        "task_id": "smoke_hightec_highlat_north_march_2024",
+        "task_type": "high_tec",
+        "success": true,
+        "metrics": {
+          "threshold_abs_error": 0.0,
+          "threshold_exact_match": true,
+          "agent_n_intervals": 16,
+          "gold_n_intervals": 16,
+          "interval_count_error": 0,
+          "interval_count_match": true,
+          "agent_global_peak_value": 21.417853022062918,
+          "gold_global_peak_value": 21.417853022062918,
+          "global_peak_abs_error": 0.0,
+          "global_peak_match": true,
+          "top_interval_start_match": true,
+          "top_interval_end_match": true,
+          "task_type_match": true,
+          "start_date_match": true,
+          "end_date_match": true,
+          "date_parse_match": true,
+          "region_parse_match": true,
+          "q_abs_error": 0.0,
+          "orchestration_step_count": 1,
+          "orchestrator_step_count": 0,
+          "worker_step_count": 0,
+          "reporter_step_count": 0,
+          "handoff_count": 0,
+          "selected_worker": "single_agent",
+          "expected_worker": "high_tec_worker",
+          "route_correct": true,
+          "orchestration_nodes": [
+            "rule_based_single_agent"
+          ],
+          "data_agent_called": false,
+          "math_agent_called": false,
+          "analysis_agent_called": false,
+          "report_agent_called": false,
+          "required_role_agents_called": false,
+          "role_agent_order": [
+            "rule_based_single_agent"
+          ],
+          "expected_role_agent_order": [
+            "orchestrator",
+            "data_agent",
+            "math_agent",
+            "analysis_agent",
+            "report_agent"
+          ],
+          "role_agent_order_match": false,
+          "artifact_flow_valid": false,
+          "data_artifact_available": false,
+          "math_artifact_available": false,
+          "analysis_artifact_available": false,
+          "report_grounded_in_artifacts": false,
+          "tool_call_count": 3,
+          "tool_error_count": 0,
+          "total_tool_latency_sec": 0.02501040000061039,
+          "tool_sequence": [
+            "tec_get_timeseries",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals"
+          ],
+          "expected_tool_sequence": [
+            "tec_get_timeseries",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals"
+          ],
+          "tool_sequence_match": true,
+          "legacy_report_tool_used": false,
+          "legacy_report_tool_absent": true,
+          "unnecessary_tool_call_count": 0,
+          "invalid_tool_name_count": 0,
+          "schema_validation_error_count": 0,
+          "tool_runtime_error_count": 0,
+          "tool_success_rate": 1.0
+        },
+        "errors": []
+      }
+    },
+    {
+      "task": {
+        "task_id": "smoke_compare_europe_highlat_march_2024",
+        "query": "Compare TEC statistics for midlat_europe and highlat_north in March 2024",
+        "task_type": "compare_regions",
+        "dataset_ref": "smoke",
+        "start": "2024-03-01",
+        "end": "2024-04-01",
+        "region_id": null,
+        "region_ids": [
+          "midlat_europe",
+          "highlat_north"
+        ],
+        "q": 0.9,
+        "params": {
+          "metrics": [
+            "mean",
+            "median",
+            "min",
+            "max",
+            "std",
+            "p90",
+            "p95"
+          ]
+        },
+        "expected_tool_sequence": [
+          "tec_get_timeseries",
+          "tec_get_timeseries",
+          "tec_compute_series_stats",
+          "tec_compute_series_stats",
+          "tec_compare_stats"
+        ],
+        "expected_worker": "role_based_workflow",
+        "description": "Smoke comparison task for two synthetic regions."
+      },
+      "gold": {
+        "task_id": "smoke_compare_europe_highlat_march_2024",
+        "task_type": "compare_regions",
+        "status": "success",
+        "result": {
+          "task_id": "smoke_compare_europe_highlat_march_2024",
+          "task_type": "compare_regions",
+          "dataset_ref": "smoke",
+          "region_ids": [
+            "midlat_europe",
+            "highlat_north"
+          ],
+          "regions": [
+            "midlat_europe",
+            "highlat_north"
+          ],
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "series": [
+            {
+              "series_id": "series_e87e837247",
+              "metadata": {
+                "series_id": "series_e87e837247",
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01",
+                "n_points": 744,
+                "finite_points": 744,
+                "freq": null,
+                "min_value": 17.00007834759437,
+                "max_value": 52.97463835423039,
+                "mean_value": 25.552842110134385,
+                "approx_q90": 32.72001043550788
+              }
+            },
+            {
+              "series_id": "series_81e9f6fd40",
+              "metadata": {
+                "series_id": "series_81e9f6fd40",
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01",
+                "n_points": 744,
+                "finite_points": 744,
+                "freq": null,
+                "min_value": 9.000016488957225,
+                "max_value": 21.417853022062918,
+                "mean_value": 12.088417739872996,
+                "approx_q90": 14.87780656529111
+              }
+            }
+          ],
+          "stats": [
+            {
+              "stats_id": "stats_5c43b69a72",
+              "series_id": "series_e87e837247",
+              "region_id": "midlat_europe",
+              "n_points": 744,
+              "finite_points": 744,
+              "metrics": {
+                "mean": 25.552842110134385,
+                "median": 25.453988320981793,
+                "min": 17.00007834759437,
+                "max": 52.97463835423039,
+                "std": 6.441458770998465,
+                "p90": 32.72001043550788,
+                "p95": 32.95606122479837
+              }
+            },
+            {
+              "stats_id": "stats_bb213ddd88",
+              "series_id": "series_81e9f6fd40",
+              "region_id": "highlat_north",
+              "n_points": 744,
+              "finite_points": 744,
+              "metrics": {
+                "mean": 12.088417739872996,
+                "median": 12.086266416837205,
+                "min": 9.000016488957225,
+                "max": 21.417853022062918,
+                "std": 2.256512489898809,
+                "p90": 14.87780656529111,
+                "p95": 14.974078622227657
+              }
+            }
+          ],
+          "comparison": {
+            "comparison_id": "cmpstats_7ef47e3544",
+            "stats_ids": [
+              "stats_5c43b69a72",
+              "stats_bb213ddd88"
+            ],
+            "reference_stats_id": null,
+            "regions": [
+              "midlat_europe",
+              "highlat_north"
+            ],
+            "items": [
+              {
+                "stats_id": "stats_5c43b69a72",
+                "series_id": "series_e87e837247",
+                "region_id": "midlat_europe",
+                "metrics": {
+                  "mean": 25.552842110134385,
+                  "median": 25.453988320981793,
+                  "min": 17.00007834759437,
+                  "max": 52.97463835423039,
+                  "std": 6.441458770998465,
+                  "p90": 32.72001043550788,
+                  "p95": 32.95606122479837
+                }
+              },
+              {
+                "stats_id": "stats_bb213ddd88",
+                "series_id": "series_81e9f6fd40",
+                "region_id": "highlat_north",
+                "metrics": {
+                  "mean": 12.088417739872996,
+                  "median": 12.086266416837205,
+                  "min": 9.000016488957225,
+                  "max": 21.417853022062918,
+                  "std": 2.256512489898809,
+                  "p90": 14.87780656529111,
+                  "p95": 14.974078622227657
+                }
+              }
+            ],
+            "pairwise_deltas": [
+              {
+                "left_stats_id": "stats_5c43b69a72",
+                "right_stats_id": "stats_bb213ddd88",
+                "left_region_id": "midlat_europe",
+                "right_region_id": "highlat_north",
+                "delta": {
+                  "mean": 13.464424370261389,
+                  "median": 13.367721904144588,
+                  "min": 8.000061858637146,
+                  "max": 31.556785332167475,
+                  "std": 4.184946281099656,
+                  "p90": 17.84220387021677,
+                  "p95": 17.98198260257071
+                }
+              }
+            ]
+          }
+        },
+        "error": null,
+        "trace": {
+          "run_id": "gold_smoke_compare_europe_highlat_march_2024",
+          "n_calls": 5,
+          "calls": [
+            {
+              "call_id": "call_b0d80ea2e4",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.010079099998620222,
+              "output": {
+                "series_id": "series_e87e837247",
+                "metadata": {
+                  "series_id": "series_e87e837247",
+                  "dataset_ref": "smoke",
+                  "region_id": "midlat_europe",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 17.00007834759437,
+                  "max_value": 52.97463835423039,
+                  "mean_value": 25.552842110134385,
+                  "approx_q90": 32.72001043550788
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 1
+            },
+            {
+              "call_id": "call_b67b6b01cd",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.007274499999766704,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "metadata": {
+                  "series_id": "series_81e9f6fd40",
+                  "dataset_ref": "smoke",
+                  "region_id": "highlat_north",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 9.000016488957225,
+                  "max_value": 21.417853022062918,
+                  "mean_value": 12.088417739872996,
+                  "approx_q90": 14.87780656529111
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 2
+            },
+            {
+              "call_id": "call_ccb7792dbd",
+              "tool_name": "tec_compute_series_stats",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.0021067999987280928,
+              "output": {
+                "stats_id": "stats_5c43b69a72",
+                "series_id": "series_e87e837247",
+                "region_id": "midlat_europe",
+                "n_points": 744,
+                "finite_points": 744,
+                "metrics": {
+                  "mean": 25.552842110134385,
+                  "median": 25.453988320981793,
+                  "min": 17.00007834759437,
+                  "max": 52.97463835423039,
+                  "std": 6.441458770998465,
+                  "p90": 32.72001043550788,
+                  "p95": 32.95606122479837
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 3
+            },
+            {
+              "call_id": "call_6eeeb8dd65",
+              "tool_name": "tec_compute_series_stats",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.002525500000047032,
+              "output": {
+                "stats_id": "stats_bb213ddd88",
+                "series_id": "series_81e9f6fd40",
+                "region_id": "highlat_north",
+                "n_points": 744,
+                "finite_points": 744,
+                "metrics": {
+                  "mean": 12.088417739872996,
+                  "median": 12.086266416837205,
+                  "min": 9.000016488957225,
+                  "max": 21.417853022062918,
+                  "std": 2.256512489898809,
+                  "p90": 14.87780656529111,
+                  "p95": 14.974078622227657
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 4
+            },
+            {
+              "call_id": "call_5e78ef7b88",
+              "tool_name": "tec_compare_stats",
+              "arguments": {
+                "stats_ids": [
+                  "stats_5c43b69a72",
+                  "stats_bb213ddd88"
+                ],
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.00012590000005729962,
+              "output": {
+                "comparison_id": "cmpstats_7ef47e3544",
+                "stats_ids": [
+                  "stats_5c43b69a72",
+                  "stats_bb213ddd88"
+                ],
+                "reference_stats_id": null,
+                "regions": [
+                  "midlat_europe",
+                  "highlat_north"
+                ],
+                "items": [
+                  {
+                    "stats_id": "stats_5c43b69a72",
+                    "series_id": "series_e87e837247",
+                    "region_id": "midlat_europe",
+                    "metrics": {
+                      "mean": 25.552842110134385,
+                      "median": 25.453988320981793,
+                      "min": 17.00007834759437,
+                      "max": 52.97463835423039,
+                      "std": 6.441458770998465,
+                      "p90": 32.72001043550788,
+                      "p95": 32.95606122479837
+                    }
+                  },
+                  {
+                    "stats_id": "stats_bb213ddd88",
+                    "series_id": "series_81e9f6fd40",
+                    "region_id": "highlat_north",
+                    "metrics": {
+                      "mean": 12.088417739872996,
+                      "median": 12.086266416837205,
+                      "min": 9.000016488957225,
+                      "max": 21.417853022062918,
+                      "std": 2.256512489898809,
+                      "p90": 14.87780656529111,
+                      "p95": 14.974078622227657
+                    }
+                  }
+                ],
+                "pairwise_deltas": [
+                  {
+                    "left_stats_id": "stats_5c43b69a72",
+                    "right_stats_id": "stats_bb213ddd88",
+                    "left_region_id": "midlat_europe",
+                    "right_region_id": "highlat_north",
+                    "delta": {
+                      "mean": 13.464424370261389,
+                      "median": 13.367721904144588,
+                      "min": 8.000061858637146,
+                      "max": 31.556785332167475,
+                      "std": 4.184946281099656,
+                      "p90": 17.84220387021677,
+                      "p95": 17.98198260257071
+                    }
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "gold_runner",
+              "step": 5
+            }
+          ]
+        }
+      },
+      "agent": {
+        "status": "success",
+        "answer": "TEC statistics comparison for highlat_north, midlat_europe from 2024-03-01 to 2024-04-01:\n\n- highlat_north: mean=12.088 TECU, median=12.086 TECU, max=21.418 TECU, std=2.257 TECU, p90=14.878 TECU.\n- midlat_europe: mean=25.553 TECU, median=25.454 TECU, max=52.975 TECU, std=6.441 TECU, p90=32.720 TECU.",
+        "parsed_task": {
+          "task_type": "compare_regions",
+          "dataset_ref": "smoke",
+          "region_id": null,
+          "region_ids": [
+            "highlat_north",
+            "midlat_europe"
+          ],
+          "regions": [
+            "highlat_north",
+            "midlat_europe"
+          ],
+          "start": "2024-03-01",
+          "end": "2024-04-01",
+          "q": 0.9,
+          "window_minutes": 180,
+          "q_delta": 0.6,
+          "q_std": 0.6,
+          "include": [
+            "basic_stats",
+            "high_tec",
+            "stable_intervals"
+          ],
+          "metrics": [
+            "mean",
+            "median",
+            "min",
+            "max",
+            "std",
+            "p90",
+            "p95"
+          ],
+          "raw_query": "Compare TEC statistics for midlat_europe and highlat_north in March 2024"
+        },
+        "tool_results": {
+          "timeseries": [
+            {
+              "series_id": "series_81e9f6fd40",
+              "metadata": {
+                "series_id": "series_81e9f6fd40",
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01",
+                "n_points": 744,
+                "finite_points": 744,
+                "freq": null,
+                "min_value": 9.000016488957225,
+                "max_value": 21.417853022062918,
+                "mean_value": 12.088417739872996,
+                "approx_q90": 14.87780656529111
+              }
+            },
+            {
+              "series_id": "series_e87e837247",
+              "metadata": {
+                "series_id": "series_e87e837247",
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01",
+                "n_points": 744,
+                "finite_points": 744,
+                "freq": null,
+                "min_value": 17.00007834759437,
+                "max_value": 52.97463835423039,
+                "mean_value": 25.552842110134385,
+                "approx_q90": 32.72001043550788
+              }
+            }
+          ],
+          "stats": [
+            {
+              "stats_id": "stats_bb213ddd88",
+              "series_id": "series_81e9f6fd40",
+              "region_id": "highlat_north",
+              "n_points": 744,
+              "finite_points": 744,
+              "metrics": {
+                "mean": 12.088417739872996,
+                "median": 12.086266416837205,
+                "min": 9.000016488957225,
+                "max": 21.417853022062918,
+                "std": 2.256512489898809,
+                "p90": 14.87780656529111,
+                "p95": 14.974078622227657
+              }
+            },
+            {
+              "stats_id": "stats_5c43b69a72",
+              "series_id": "series_e87e837247",
+              "region_id": "midlat_europe",
+              "n_points": 744,
+              "finite_points": 744,
+              "metrics": {
+                "mean": 25.552842110134385,
+                "median": 25.453988320981793,
+                "min": 17.00007834759437,
+                "max": 52.97463835423039,
+                "std": 6.441458770998465,
+                "p90": 32.72001043550788,
+                "p95": 32.95606122479837
+              }
+            }
+          ],
+          "comparison": {
+            "comparison_id": "cmpstats_bd503f9fc9",
+            "stats_ids": [
+              "stats_bb213ddd88",
+              "stats_5c43b69a72"
+            ],
+            "reference_stats_id": null,
+            "regions": [
+              "highlat_north",
+              "midlat_europe"
+            ],
+            "items": [
+              {
+                "stats_id": "stats_bb213ddd88",
+                "series_id": "series_81e9f6fd40",
+                "region_id": "highlat_north",
+                "metrics": {
+                  "mean": 12.088417739872996,
+                  "median": 12.086266416837205,
+                  "min": 9.000016488957225,
+                  "max": 21.417853022062918,
+                  "std": 2.256512489898809,
+                  "p90": 14.87780656529111,
+                  "p95": 14.974078622227657
+                }
+              },
+              {
+                "stats_id": "stats_5c43b69a72",
+                "series_id": "series_e87e837247",
+                "region_id": "midlat_europe",
+                "metrics": {
+                  "mean": 25.552842110134385,
+                  "median": 25.453988320981793,
+                  "min": 17.00007834759437,
+                  "max": 52.97463835423039,
+                  "std": 6.441458770998465,
+                  "p90": 32.72001043550788,
+                  "p95": 32.95606122479837
+                }
+              }
+            ],
+            "pairwise_deltas": [
+              {
+                "left_stats_id": "stats_bb213ddd88",
+                "right_stats_id": "stats_5c43b69a72",
+                "left_region_id": "highlat_north",
+                "right_region_id": "midlat_europe",
+                "delta": {
+                  "mean": -13.464424370261389,
+                  "median": -13.367721904144588,
+                  "min": -8.000061858637146,
+                  "max": -31.556785332167475,
+                  "std": -4.184946281099656,
+                  "p90": -17.84220387021677,
+                  "p95": -17.98198260257071
+                }
+              }
+            ]
+          }
+        },
+        "trace": {
+          "run_id": "run_2347b23808",
+          "n_calls": 5,
+          "calls": [
+            {
+              "call_id": "call_d4f2cb1951",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "highlat_north",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.007259199999680277,
+              "output": {
+                "series_id": "series_81e9f6fd40",
+                "metadata": {
+                  "series_id": "series_81e9f6fd40",
+                  "dataset_ref": "smoke",
+                  "region_id": "highlat_north",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 9.000016488957225,
+                  "max_value": 21.417853022062918,
+                  "mean_value": 12.088417739872996,
+                  "approx_q90": 14.87780656529111
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 1
+            },
+            {
+              "call_id": "call_d1b82a828c",
+              "tool_name": "tec_get_timeseries",
+              "arguments": {
+                "dataset_ref": "smoke",
+                "region_id": "midlat_europe",
+                "start": "2024-03-01",
+                "end": "2024-04-01"
+              },
+              "status": "ok",
+              "latency_sec": 0.0072946000000229105,
+              "output": {
+                "series_id": "series_e87e837247",
+                "metadata": {
+                  "series_id": "series_e87e837247",
+                  "dataset_ref": "smoke",
+                  "region_id": "midlat_europe",
+                  "start": "2024-03-01",
+                  "end": "2024-04-01",
+                  "n_points": 744,
+                  "finite_points": 744,
+                  "freq": null,
+                  "min_value": 17.00007834759437,
+                  "max_value": 52.97463835423039,
+                  "mean_value": 25.552842110134385,
+                  "approx_q90": 32.72001043550788
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 2
+            },
+            {
+              "call_id": "call_d87af35cdc",
+              "tool_name": "tec_compute_series_stats",
+              "arguments": {
+                "series_id": "series_81e9f6fd40",
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.0021546000007219845,
+              "output": {
+                "stats_id": "stats_bb213ddd88",
+                "series_id": "series_81e9f6fd40",
+                "region_id": "highlat_north",
+                "n_points": 744,
+                "finite_points": 744,
+                "metrics": {
+                  "mean": 12.088417739872996,
+                  "median": 12.086266416837205,
+                  "min": 9.000016488957225,
+                  "max": 21.417853022062918,
+                  "std": 2.256512489898809,
+                  "p90": 14.87780656529111,
+                  "p95": 14.974078622227657
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 3
+            },
+            {
+              "call_id": "call_56f0691959",
+              "tool_name": "tec_compute_series_stats",
+              "arguments": {
+                "series_id": "series_e87e837247",
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.00163319999956002,
+              "output": {
+                "stats_id": "stats_5c43b69a72",
+                "series_id": "series_e87e837247",
+                "region_id": "midlat_europe",
+                "n_points": 744,
+                "finite_points": 744,
+                "metrics": {
+                  "mean": 25.552842110134385,
+                  "median": 25.453988320981793,
+                  "min": 17.00007834759437,
+                  "max": 52.97463835423039,
+                  "std": 6.441458770998465,
+                  "p90": 32.72001043550788,
+                  "p95": 32.95606122479837
+                }
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 4
+            },
+            {
+              "call_id": "call_5779c532e5",
+              "tool_name": "tec_compare_stats",
+              "arguments": {
+                "stats_ids": [
+                  "stats_bb213ddd88",
+                  "stats_5c43b69a72"
+                ],
+                "metrics": [
+                  "mean",
+                  "median",
+                  "min",
+                  "max",
+                  "std",
+                  "p90",
+                  "p95"
+                ]
+              },
+              "status": "ok",
+              "latency_sec": 0.00014000000010128133,
+              "output": {
+                "comparison_id": "cmpstats_bd503f9fc9",
+                "stats_ids": [
+                  "stats_bb213ddd88",
+                  "stats_5c43b69a72"
+                ],
+                "reference_stats_id": null,
+                "regions": [
+                  "highlat_north",
+                  "midlat_europe"
+                ],
+                "items": [
+                  {
+                    "stats_id": "stats_bb213ddd88",
+                    "series_id": "series_81e9f6fd40",
+                    "region_id": "highlat_north",
+                    "metrics": {
+                      "mean": 12.088417739872996,
+                      "median": 12.086266416837205,
+                      "min": 9.000016488957225,
+                      "max": 21.417853022062918,
+                      "std": 2.256512489898809,
+                      "p90": 14.87780656529111,
+                      "p95": 14.974078622227657
+                    }
+                  },
+                  {
+                    "stats_id": "stats_5c43b69a72",
+                    "series_id": "series_e87e837247",
+                    "region_id": "midlat_europe",
+                    "metrics": {
+                      "mean": 25.552842110134385,
+                      "median": 25.453988320981793,
+                      "min": 17.00007834759437,
+                      "max": 52.97463835423039,
+                      "std": 6.441458770998465,
+                      "p90": 32.72001043550788,
+                      "p95": 32.95606122479837
+                    }
+                  }
+                ],
+                "pairwise_deltas": [
+                  {
+                    "left_stats_id": "stats_bb213ddd88",
+                    "right_stats_id": "stats_5c43b69a72",
+                    "left_region_id": "highlat_north",
+                    "right_region_id": "midlat_europe",
+                    "delta": {
+                      "mean": -13.464424370261389,
+                      "median": -13.367721904144588,
+                      "min": -8.000061858637146,
+                      "max": -31.556785332167475,
+                      "std": -4.184946281099656,
+                      "p90": -17.84220387021677,
+                      "p95": -17.98198260257071
+                    }
+                  }
+                ]
+              },
+              "error_type": null,
+              "error_message": null,
+              "traceback_text": null,
+              "agent_name": "rule_based_single_agent",
+              "step": 5
+            }
+          ]
+        },
+        "orchestration_steps": [
+          {
+            "node": "rule_based_single_agent",
+            "action": "parse_route_execute_and_report",
+            "details": {
+              "task_type": "compare_regions",
+              "region_id": null,
+              "region_ids": [
+                "highlat_north",
+                "midlat_europe"
+              ],
+              "regions": [
+                "highlat_north",
+                "midlat_europe"
+              ],
+              "start": "2024-03-01",
+              "end": "2024-04-01",
+              "q": 0.9,
+              "window_minutes": 180,
+              "q_delta": 0.6,
+              "q_std": 0.6,
+              "include": [
+                "basic_stats",
+                "high_tec",
+                "stable_intervals"
+              ],
+              "metrics": [
+                "mean",
+                "median",
+                "min",
+                "max",
+                "std",
+                "p90",
+                "p95"
+              ],
+              "selected_worker": "single_agent"
+            }
+          }
+        ],
+        "error": null
+      },
+      "metrics": {
+        "task_id": "smoke_compare_europe_highlat_march_2024",
+        "task_type": "compare_regions",
+        "success": true,
+        "metrics": {
+          "region_set_match": true,
+          "agent_region_count": 2,
+          "gold_region_count": 2,
+          "shared_region_count": 2,
+          "mean_abs_error_avg": 0.0,
+          "max_abs_error_avg": 0.0,
+          "p90_abs_error_avg": 0.0,
+          "mean_abs_error_max": 0.0,
+          "max_abs_error_max": 0.0,
+          "p90_abs_error_max": 0.0,
+          "stats_tool_call_count": 2,
+          "compare_stats_present": true,
+          "compare_stats_region_count": 2,
+          "pairwise_delta_count": 1,
+          "expected_pairwise_delta_count": 1,
+          "pairwise_delta_count_match": true,
+          "task_type_match": true,
+          "start_date_match": true,
+          "end_date_match": true,
+          "date_parse_match": true,
+          "region_parse_match": true,
+          "q_abs_error": 0.0,
+          "orchestration_step_count": 1,
+          "orchestrator_step_count": 0,
+          "worker_step_count": 0,
+          "reporter_step_count": 0,
+          "handoff_count": 0,
+          "selected_worker": "single_agent",
+          "expected_worker": "compare_worker",
+          "route_correct": true,
+          "orchestration_nodes": [
+            "rule_based_single_agent"
+          ],
+          "data_agent_called": false,
+          "math_agent_called": false,
+          "analysis_agent_called": false,
+          "report_agent_called": false,
+          "required_role_agents_called": false,
+          "role_agent_order": [
+            "rule_based_single_agent"
+          ],
+          "expected_role_agent_order": [
+            "orchestrator",
+            "data_agent",
+            "math_agent",
+            "analysis_agent",
+            "report_agent"
+          ],
+          "role_agent_order_match": false,
+          "artifact_flow_valid": false,
+          "data_artifact_available": false,
+          "math_artifact_available": false,
+          "analysis_artifact_available": false,
+          "report_grounded_in_artifacts": false,
+          "tool_call_count": 5,
+          "tool_error_count": 0,
+          "total_tool_latency_sec": 0.018481600000086473,
+          "tool_sequence": [
+            "tec_get_timeseries",
+            "tec_get_timeseries",
+            "tec_compute_series_stats",
+            "tec_compute_series_stats",
+            "tec_compare_stats"
+          ],
+          "expected_tool_sequence": [
+            "tec_get_timeseries",
+            "tec_get_timeseries",
+            "tec_compute_series_stats",
+            "tec_compute_series_stats",
+            "tec_compare_stats"
+          ],
+          "tool_sequence_match": true,
+          "legacy_report_tool_used": false,
+          "legacy_report_tool_absent": true,
+          "unnecessary_tool_call_count": 0,
+          "invalid_tool_name_count": 0,
+          "schema_validation_error_count": 0,
+          "tool_runtime_error_count": 0,
+          "tool_success_rate": 1.0
+        },
+        "errors": []
+      }
+    }
+  ]
+}

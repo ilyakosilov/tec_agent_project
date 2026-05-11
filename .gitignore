@@ -237,10 +237,8 @@ data/processed/*.zarr/
 
 # Experiment outputs
 outputs/traces/
-outputs/metrics/
 outputs/tables/
 outputs/figures/
-outputs/reports/
 
 # Models and local secrets
 models/
