@@ -21,10 +21,10 @@ Base domain context:
   equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe,
   midlat_usa, midlat_asia, midlat_south_america, midlat_australia,
   highlat_north, highlat_south.
-- Dates must be passed to tools explicitly.
-- For March 2024, a typical explicit period may be start="2024-03-01" with
-  end="2024-03-31" or end="2024-04-01", depending on the current project
-  logic. Do not change date semantics; make the requested dates explicit.
+- Dates must be passed to tools explicitly using the [start, end) convention:
+  start is inclusive and end is exclusive.
+- For full March 2024, use start="2024-03-01" and end="2024-04-01"; do not
+  replace the exclusive end with the last calendar day.
 - Main task types are high_tec, stable_intervals, compare_regions, and report.
 - high_tec means finding intervals where TEC is above a computed threshold.
 - stable_intervals means finding periods of low TEC variability.

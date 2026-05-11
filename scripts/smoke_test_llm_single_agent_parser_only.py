@@ -277,6 +277,66 @@ Recovered after a repeated call correction and completed high TEC detection.
 """.strip()
 
 
+class FakeWrongDateThenRecoverModel:
+    """Fake model that first uses inclusive month-end, then corrects it."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.date_correction_message = ""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-03-31"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            self.date_correction_message = messages[-1]["content"]
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 4:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Recovered from a date range correction and completed high TEC detection.
+</final_answer>
+""".strip()
+
+
+class FakeWrongDateRepeatedModel:
+    """Fake model that keeps using inclusive month-end after correction."""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-03-31"}}
+</tool_call>
+""".strip()
+
+
 def build_agent(
     model,
     run_id: str,
@@ -321,6 +381,8 @@ def main() -> None:
     assert result.repair_attempt_count == 0
     assert result.repeated_tool_call_count == 0
     assert result.stalled_loop_detected is False
+    assert result.date_range_mismatch_detected is False
+    assert result.date_range_correction_count == 0
     assert result.artifact_usage_failure is False
     assert result.state_feedback_mode == "state_aware"
     assert result.missing_goal_artifacts == []
@@ -403,6 +465,50 @@ more garbage
     assert repeat_then_recover_result.state_feedback_mode == "state_aware"
     assert "tec_compute_high_threshold" not in repeat_then_recover_model.correction_message
     assert '<tool_call>\n{"name":' not in repeat_then_recover_model.correction_message
+
+    wrong_date_model = FakeWrongDateThenRecoverModel()
+    wrong_date_agent = build_agent(
+        wrong_date_model,
+        run_id="smoke_llm_single_agent_wrong_date_then_recover",
+    )
+    wrong_date_result = wrong_date_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    executed_timeseries_calls = [
+        call
+        for call in wrong_date_result.trace["calls"]
+        if call["tool_name"] == "tec_get_timeseries"
+    ]
+
+    assert wrong_date_result.success is True
+    assert wrong_date_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+    ]
+    assert wrong_date_result.date_range_mismatch_detected is True
+    assert wrong_date_result.date_range_correction_count == 1
+    assert wrong_date_result.artifact_usage_failure is False
+    assert len(executed_timeseries_calls) == 1
+    assert executed_timeseries_calls[0]["arguments"]["end"] == "2024-04-01"
+    assert "required_analysis_period: [2024-03-01, 2024-04-01)" in (
+        wrong_date_model.date_correction_message
+    )
+
+    wrong_date_stalled_agent = build_agent(
+        FakeWrongDateRepeatedModel(),
+        run_id="smoke_llm_single_agent_wrong_date_repeated",
+    )
+    wrong_date_stalled_result = wrong_date_stalled_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    assert wrong_date_stalled_result.success is False
+    assert wrong_date_stalled_result.date_range_mismatch_detected is True
+    assert wrong_date_stalled_result.date_range_correction_count == 2
+    assert wrong_date_stalled_result.artifact_usage_failure is True
+    assert wrong_date_stalled_result.trace["n_calls"] == 0
 
     repeated_agent = build_agent(
         FakeRepeatedToolModel(),

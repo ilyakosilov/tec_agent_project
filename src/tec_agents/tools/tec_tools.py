@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from tec_agents.data.dates import expected_hourly_points
 from tec_agents.data.datasets import get_region_series
 from tec_agents.tools.schemas import (
     CompareRegionsInput,
@@ -143,6 +144,8 @@ def _series_metadata(
     """Build compact metadata for a TEC series."""
 
     finite = _finite_values(series)
+    actual_start = _format_timestamp(series.index.min()) if len(series) else None
+    actual_end = _format_timestamp(series.index.max()) if len(series) else None
 
     return SeriesMetadata(
         series_id=series_id,
@@ -150,6 +153,14 @@ def _series_metadata(
         region_id=region_id,  # type: ignore[arg-type]
         start=start,
         end=end,
+        requested_start=start,
+        requested_end=end,
+        interval_convention="[start, end)",
+        actual_start=actual_start,
+        actual_end=actual_end,
+        actual_start_time=actual_start,
+        actual_end_time=actual_end,
+        expected_hourly_points=expected_hourly_points(start, end),
         n_points=int(len(series)),
         finite_points=int(len(finite)),
         freq=freq,

@@ -232,6 +232,7 @@ data/cache/
 # Large processed data
 data/processed/*.parquet
 data/processed/*.csv
+data/processed/*.meta.json
 data/processed/*.nc
 data/processed/*.zarr/
 

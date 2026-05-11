@@ -12,6 +12,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from tec_agents.data.dates import parse_date_range_from_text
 from tec_agents.data.regions import list_region_ids
 from tec_agents.llm.prompts import build_single_agent_system_prompt
 from tec_agents.llm.tool_call_parser import (
@@ -73,6 +74,8 @@ class LLMSingleAgentResult:
     repair_attempt_count: int
     repeated_tool_call_count: int
     stalled_loop_detected: bool
+    date_range_mismatch_detected: bool
+    date_range_correction_count: int
     state_feedback_mode: str
     completed_tool_calls: list[dict[str, Any]]
     available_artifacts: dict[str, Any]
@@ -145,6 +148,8 @@ class LLMSingleAgent:
         repair_attempt_count = 0
         repeated_tool_call_count = 0
         stalled_loop_detected = False
+        date_range_mismatch_detected = False
+        date_range_correction_count = 0
         artifact_usage_failure = False
         consecutive_parse_errors = 0
         tool_call_count = 0
@@ -221,6 +226,8 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    date_range_mismatch_detected=date_range_mismatch_detected,
+                    date_range_correction_count=date_range_correction_count,
                     artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=success,
@@ -276,6 +283,8 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    date_range_mismatch_detected=date_range_mismatch_detected,
+                    date_range_correction_count=date_range_correction_count,
                     artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=False,
@@ -345,6 +354,8 @@ class LLMSingleAgent:
                         repair_attempt_count=repair_attempt_count,
                         repeated_tool_call_count=repeated_tool_call_count,
                         stalled_loop_detected=stalled_loop_detected,
+                        date_range_mismatch_detected=date_range_mismatch_detected,
+                        date_range_correction_count=date_range_correction_count,
                         artifact_usage_failure=artifact_usage_failure,
                         tool_sequence=tool_sequence,
                         success=False,
@@ -362,6 +373,77 @@ class LLMSingleAgent:
                             tool_call.name,
                             tool_call.arguments,
                             task_state,
+                        ),
+                    }
+                )
+                continue
+
+            date_mismatch = validate_tool_call_date_range(
+                tool_call.name,
+                tool_call.arguments,
+                task_state,
+            )
+            if date_mismatch is not None:
+                date_range_mismatch_detected = True
+                date_range_correction_count += 1
+                repair_attempt_count += 1
+                warnings.append("date_range_mismatch")
+
+                record = LLMSingleAgentStep(
+                    step=step,
+                    raw_model_output=raw_output,
+                    cleaned_model_output=cleaned_output,
+                    parsed_type="tool_call",
+                    warnings=warnings,
+                    tool_name=tool_call.name,
+                    arguments=tool_call.arguments,
+                    tool_status="skipped_date_range_mismatch",
+                    tool_result={
+                        "error": {
+                            "error_type": "date_range_mismatch",
+                            "message": date_mismatch,
+                        }
+                    },
+                )
+                step_records.append(record)
+
+                if date_range_correction_count >= 2:
+                    artifact_usage_failure = True
+                    return self._result(
+                        answer="",
+                        user_query=user_query,
+                        task_state=task_state,
+                        tool_records=tool_records,
+                        step_records=step_records,
+                        raw_model_outputs=raw_model_outputs,
+                        cleaned_model_outputs=cleaned_model_outputs,
+                        parse_error_count=parse_error_count,
+                        invalid_json_count=invalid_json_count,
+                        unknown_format_count=unknown_format_count,
+                        multi_tool_call_output_count=multi_tool_call_output_count,
+                        multi_final_answer_output_count=multi_final_answer_output_count,
+                        repair_attempt_count=repair_attempt_count,
+                        repeated_tool_call_count=repeated_tool_call_count,
+                        stalled_loop_detected=stalled_loop_detected,
+                        date_range_mismatch_detected=date_range_mismatch_detected,
+                        date_range_correction_count=date_range_correction_count,
+                        artifact_usage_failure=artifact_usage_failure,
+                        tool_sequence=tool_sequence,
+                        success=False,
+                        error_message=(
+                            "Date range mismatch persisted after correction. "
+                            "The model did not use the exclusive end date from task state."
+                        ),
+                    )
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": build_date_range_correction_message(
+                            tool_call.name,
+                            tool_call.arguments,
+                            task_state,
+                            date_mismatch,
                         ),
                     }
                 )
@@ -403,6 +485,8 @@ class LLMSingleAgent:
                     repair_attempt_count=repair_attempt_count,
                     repeated_tool_call_count=repeated_tool_call_count,
                     stalled_loop_detected=stalled_loop_detected,
+                    date_range_mismatch_detected=date_range_mismatch_detected,
+                    date_range_correction_count=date_range_correction_count,
                     artifact_usage_failure=artifact_usage_failure,
                     tool_sequence=tool_sequence,
                     success=False,
@@ -494,6 +578,8 @@ class LLMSingleAgent:
                         repair_attempt_count=repair_attempt_count,
                         repeated_tool_call_count=repeated_tool_call_count,
                         stalled_loop_detected=stalled_loop_detected,
+                        date_range_mismatch_detected=date_range_mismatch_detected,
+                        date_range_correction_count=date_range_correction_count,
                         artifact_usage_failure=artifact_usage_failure,
                         tool_sequence=tool_sequence,
                         success=False,
@@ -527,6 +613,8 @@ class LLMSingleAgent:
             repair_attempt_count=repair_attempt_count,
             repeated_tool_call_count=repeated_tool_call_count,
             stalled_loop_detected=stalled_loop_detected,
+            date_range_mismatch_detected=date_range_mismatch_detected,
+            date_range_correction_count=date_range_correction_count,
             artifact_usage_failure=artifact_usage_failure,
             tool_sequence=tool_sequence,
             success=False,
@@ -591,6 +679,8 @@ class LLMSingleAgent:
         repair_attempt_count: int,
         repeated_tool_call_count: int,
         stalled_loop_detected: bool,
+        date_range_mismatch_detected: bool,
+        date_range_correction_count: int,
         artifact_usage_failure: bool,
         tool_sequence: list[str],
         success: bool,
@@ -619,6 +709,8 @@ class LLMSingleAgent:
             repair_attempt_count=repair_attempt_count,
             repeated_tool_call_count=repeated_tool_call_count,
             stalled_loop_detected=stalled_loop_detected,
+            date_range_mismatch_detected=date_range_mismatch_detected,
+            date_range_correction_count=date_range_correction_count,
             state_feedback_mode=self.state_feedback_mode,
             completed_tool_calls=list(task_state.get("completed_tool_calls") or []),
             available_artifacts=dict(task_state.get("available_artifacts") or {}),
@@ -656,6 +748,9 @@ Textual tool-call protocol:
 - Do not repeat completed successful tool calls with the same arguments.
 - If an artifact id is available, use it when relevant.
 - You must choose the next tool yourself.
+- Date intervals use [start, end): start is inclusive and end is exclusive.
+- If task state shows an analysis period, use the exclusive end date exactly
+  as shown in tool arguments. Do not replace it with the last calendar day.
 - For high_tec tasks, high TEC intervals require a time series, a high
   threshold, and interval detection.
 - Never output more than one tool call.
@@ -738,9 +833,10 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
 
     start = None
     end = None
-    if "march" in lower and "2024" in lower:
-        start = "2024-03-01"
-        end = "2024-04-01"
+    try:
+        start, end = parse_date_range_from_text(user_query)
+    except ValueError:
+        pass
 
     task_state = {
         "raw_query": user_query,
@@ -750,6 +846,10 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         "q": q,
         "start": start,
         "end": end,
+        "analysis_period": (
+            f"[{start}, {end})" if start is not None and end is not None else None
+        ),
+        "interval_convention": "[start, end)",
         "series_id": None,
         "threshold_id": None,
         "intervals_ready": False,
@@ -805,6 +905,12 @@ def update_task_state_from_tool_result(
 
         if series_id is not None:
             artifacts["series_id"] = series_id
+            if metadata.get("n_points") is not None:
+                artifacts["n_points"] = metadata["n_points"]
+            if metadata.get("actual_start") is not None:
+                artifacts["actual_start"] = metadata["actual_start"]
+            if metadata.get("actual_end") is not None:
+                artifacts["actual_end"] = metadata["actual_end"]
             if region_id is not None:
                 task_state.setdefault("series_by_region", {})[str(region_id)] = series_id
             if (
@@ -918,7 +1024,9 @@ def build_state_aware_observation_message(
         f"- task_type: {task_state.get('task_type')}",
         f"- target_region: {task_state.get('region_id')}",
         f"- q: {task_state.get('q')}",
-        f"- period: {task_state.get('start')} to {task_state.get('end')}",
+        f"- analysis_period: {task_state.get('analysis_period')}",
+        f"- interval_convention: {task_state.get('interval_convention')}",
+        "- use the exclusive end date exactly as shown in tool arguments",
         "- available_artifacts:",
     ]
 
@@ -1021,6 +1129,63 @@ def build_repeated_tool_call_repair_message(
     )
 
 
+def validate_tool_call_date_range(
+    tool_name: str,
+    arguments: dict[str, Any],
+    task_state: dict[str, Any],
+) -> str | None:
+    """Return an error message if a timeseries call violates task dates."""
+
+    if tool_name != "tec_get_timeseries":
+        return None
+
+    expected_start = task_state.get("start")
+    expected_end = task_state.get("end")
+    if expected_start is None or expected_end is None:
+        return None
+
+    actual_start = _normalize_date_argument(arguments.get("start"))
+    actual_end = _normalize_date_argument(arguments.get("end"))
+    expected_start_norm = _normalize_date_argument(expected_start)
+    expected_end_norm = _normalize_date_argument(expected_end)
+
+    if actual_start == expected_start_norm and actual_end == expected_end_norm:
+        return None
+
+    return (
+        f"The requested analysis period is [{expected_start_norm}, {expected_end_norm}). "
+        f"The tool call used start={actual_start!r}, end={actual_end!r}. "
+        "Use the exclusive end date from task state exactly; do not replace it "
+        "with the last calendar day."
+    )
+
+
+def build_date_range_correction_message(
+    tool_name: str,
+    arguments: dict[str, Any],
+    task_state: dict[str, Any],
+    error: str,
+) -> str:
+    """Return a correction for a tool call with the wrong date interval."""
+
+    return "\n".join(
+        [
+            "Your previous tool call was rejected because its date range does not match the task state.",
+            "",
+            error,
+            "",
+            f"- rejected_tool: {tool_name}",
+            f"- rejected_arguments: {safe_compact_json(arguments)}",
+            f"- required_analysis_period: {task_state.get('analysis_period')}",
+            f"- interval_convention: {task_state.get('interval_convention')}",
+            "",
+            "Choose a valid tool call yourself using the required analysis period.",
+            "Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
+            "Do not include explanations, markdown, role labels, or schema text outside the tags.",
+        ]
+    )
+
+
 def _first_closed_tag_block(text: str, tag: str) -> tuple[int, int] | None:
     """Return start/end offsets for the first complete tag block."""
 
@@ -1042,6 +1207,19 @@ def _tool_call_key_text(tool_call_key: tuple[str, str]) -> str:
     """Return a compact string key for a canonicalized tool call."""
 
     return f"{tool_call_key[0]}:{tool_call_key[1]}"
+
+
+def _normalize_date_argument(value: Any) -> str | None:
+    """Normalize date-like tool arguments to YYYY-MM-DD for comparison."""
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    return text[:10]
 
 
 def _should_request_final_answer(task_state: dict[str, Any]) -> bool:
@@ -1103,6 +1281,16 @@ def _returned_artifacts(tool_response: dict[str, Any]) -> dict[str, Any]:
     metadata = result.get("metadata") or {}
     if metadata.get("region_id") is not None:
         artifacts["region_id"] = metadata["region_id"]
+    for key in [
+        "n_points",
+        "requested_start",
+        "requested_end",
+        "actual_start",
+        "actual_end",
+        "interval_convention",
+    ]:
+        if key in metadata:
+            artifacts[key] = metadata[key]
 
     return artifacts
 
@@ -1120,6 +1308,9 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
             lines.append(f"- series_id for {region_id}: {series_id}")
         else:
             lines.append(f"- series_id: {series_id}")
+        n_points = (task_state.get("available_artifacts") or {}).get("n_points")
+        if n_points is not None:
+            lines.append(f"- time series n_points: {n_points}")
 
     if threshold_id is not None:
         lines.append(f"- threshold_id: {threshold_id}")
@@ -1240,14 +1431,23 @@ def _build_available_tools_context(
     task_type = task_state.get("task_type")
 
     if task_type == "high_tec":
-        return "\n".join(
-            [
-                "Available tools for this task:",
-                "- tec_get_timeseries: obtain a TEC time series and return series_id.",
-                "- tec_compute_high_threshold: compute a high TEC threshold from series_id and return threshold_id.",
-                "- tec_detect_high_intervals: detect high TEC intervals using series_id and threshold_id.",
-            ]
-        )
+        lines = [
+            "Available tools for this task:",
+            "- tec_get_timeseries: obtain a TEC time series and return series_id.",
+            "- tec_compute_high_threshold: compute a high TEC threshold from series_id and return threshold_id.",
+            "- tec_detect_high_intervals: detect high TEC intervals using series_id and threshold_id.",
+        ]
+        if task_state.get("analysis_period"):
+            lines.extend(
+                [
+                    "",
+                    f"Analysis period: {task_state['analysis_period']}",
+                    "Interval convention: [start, end), with end exclusive.",
+                    "Use the exclusive end date exactly as shown in tec_get_timeseries arguments.",
+                    "Do not replace the end date with the last calendar day.",
+                ]
+            )
+        return "\n".join(lines)
 
     lines = ["Available deterministic tools:"]
     for tool in tools:
@@ -1423,6 +1623,7 @@ __all__ = [
     "LLMSingleAgentResult",
     "LLMSingleAgentStep",
     "build_invalid_json_repair_message",
+    "build_date_range_correction_message",
     "build_missing_field_repair_message",
     "build_repeated_tool_call_repair_message",
     "build_tool_observation_message",
@@ -1434,4 +1635,5 @@ __all__ = [
     "count_tool_call_blocks",
     "infer_task_state",
     "safe_compact_json",
+    "validate_tool_call_date_range",
 ]

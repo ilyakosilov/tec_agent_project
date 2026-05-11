@@ -15,10 +15,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date
 from typing import Any
-
-from dateutil.relativedelta import relativedelta
 
 from tec_agents.agents.protocol import (
     AgentResponse,
@@ -28,37 +25,12 @@ from tec_agents.agents.protocol import (
     agent_ok,
     agent_tool_error,
 )
+from tec_agents.data.dates import parse_date_range_from_text
 from tec_agents.data.regions import list_region_ids
 from tec_agents.mcp.client import LocalMCPClient
 
 
 MAX_TOOL_RETRIES = 2
-MONTHS: dict[str, int] = {
-    "january": 1,
-    "jan": 1,
-    "february": 2,
-    "feb": 2,
-    "march": 3,
-    "mar": 3,
-    "april": 4,
-    "apr": 4,
-    "may": 5,
-    "june": 6,
-    "jun": 6,
-    "july": 7,
-    "jul": 7,
-    "august": 8,
-    "aug": 8,
-    "september": 9,
-    "sep": 9,
-    "october": 10,
-    "oct": 10,
-    "november": 11,
-    "nov": 11,
-    "december": 12,
-    "dec": 12,
-}
-
 DEFAULT_REPORT_INCLUDE = ["basic_stats", "high_tec", "stable_intervals"]
 
 
@@ -990,28 +962,7 @@ class RuleBasedSingleAgent:
     def _extract_month_range(self, lower_query: str) -> tuple[str, str]:
         """Extract month and year as half-open date interval [start, end)."""
 
-        year_match = re.search(r"\b(20\d{2}|19\d{2})\b", lower_query)
-        if not year_match:
-            raise ValueError("Could not find year in query")
-
-        year = int(year_match.group(1))
-
-        month = None
-        for month_name, month_number in MONTHS.items():
-            if re.search(rf"\b{re.escape(month_name)}\b", lower_query):
-                month = month_number
-                break
-
-        if month is None:
-            raise ValueError("Could not find month in query")
-
-        start_obj = date(year, month, 1)
-        end_obj = start_obj + relativedelta(months=1)
-
-        start_date = f"{start_obj.year:04d}-{start_obj.month:02d}-{start_obj.day:02d}"
-        end_date = f"{end_obj.year:04d}-{end_obj.month:02d}-{end_obj.day:02d}"
-
-        return start_date, end_date
+        return parse_date_range_from_text(lower_query)
 
     def _extract_quantile(self, lower_query: str) -> float:
         """Extract q from query or use default q=0.9."""

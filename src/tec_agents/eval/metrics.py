@@ -9,6 +9,7 @@ comparing single-agent and multi-agent architectures.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 
@@ -125,9 +126,11 @@ def compare_high_tec(
 
         agent_threshold = agent_high["threshold"]
         agent_intervals = agent_high["intervals"]
+        agent_series = _extract_timeseries_payload(agent_result)
 
         gold_threshold = gold_high["threshold"]
         gold_intervals = gold_high["intervals"]
+        gold_series = _extract_timeseries_payload(gold_result)
 
         agent_threshold_value = _as_float(agent_threshold["value"])
         gold_threshold_value = _as_float(gold_threshold["value"])
@@ -145,6 +148,13 @@ def compare_high_tec(
         metrics["gold_n_intervals"] = gold_n_intervals
         metrics["interval_count_error"] = abs(agent_n_intervals - gold_n_intervals)
         metrics["interval_count_match"] = agent_n_intervals == gold_n_intervals
+        metrics.update(
+            _timeseries_point_metrics(
+                agent_series=agent_series,
+                gold_series=gold_series,
+                task=task,
+            )
+        )
 
         agent_peak = _max_peak(agent_intervals.get("intervals", []))
         gold_peak = _max_peak(gold_intervals.get("intervals", []))
@@ -190,6 +200,8 @@ def compare_high_tec(
         not errors
         and metrics.get("threshold_abs_error") == 0
         and metrics.get("interval_count_error") == 0
+        and metrics.get("date_parse_match") is not False
+        and metrics.get("timeseries_n_points_match") is not False
     )
 
     return MetricResult(
@@ -716,28 +728,46 @@ def _parse_metrics(
         metrics["q_abs_error"] = None
         return metrics
 
-    metrics["task_type_match"] = parsed_task.get("task_type") == task.get("task_type")
-    metrics["start_date_match"] = parsed_task.get("start") == task.get("start")
-    metrics["end_date_match"] = parsed_task.get("end") == task.get("end")
+    parsed = _normalized_parsed_task(parsed_task)
+
+    metrics["task_type_match"] = parsed.get("task_type") == task.get("task_type")
+    metrics["expected_start"] = task.get("start")
+    metrics["expected_end"] = task.get("end")
+    metrics["parsed_start"] = parsed.get("start")
+    metrics["parsed_end"] = parsed.get("end")
+    metrics["start_date_match"] = parsed.get("start") == task.get("start")
+    metrics["end_date_match"] = parsed.get("end") == task.get("end")
     metrics["date_parse_match"] = (
         metrics["start_date_match"] is True and metrics["end_date_match"] is True
     )
 
     if task.get("task_type") == "high_tec":
-        metrics["region_parse_match"] = parsed_task.get("region_id") == task.get(
+        metrics["region_parse_match"] = parsed.get("region_id") == task.get(
             "region_id"
         )
     else:
-        parsed_regions = set(parsed_task.get("region_ids") or [])
+        parsed_regions = set(parsed.get("region_ids") or [])
         task_regions = set(task.get("region_ids") or [])
         metrics["region_parse_match"] = parsed_regions == task_regions
 
     try:
-        metrics["q_abs_error"] = abs(float(parsed_task.get("q")) - float(task.get("q")))
+        metrics["q_abs_error"] = abs(float(parsed.get("q")) - float(task.get("q")))
     except Exception:
         metrics["q_abs_error"] = None
 
     return metrics
+
+
+def _normalized_parsed_task(parsed_task: dict[str, Any]) -> dict[str, Any]:
+    """Return parsed task fields from direct or LLMSingleAgent nested shape."""
+
+    task_state = parsed_task.get("task_state")
+    if isinstance(task_state, dict):
+        merged = dict(parsed_task)
+        merged.update(task_state)
+        return merged
+
+    return parsed_task
 
 
 def _orchestration_metrics(
@@ -1161,7 +1191,7 @@ def _trace_metrics(
         and "Unknown tool" not in str(call.get("error_message", ""))
     )
 
-    return {
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {
         "tool_call_count": tool_call_count,
         "tool_error_count": tool_error_count,
         "total_tool_latency_sec": total_latency_sec,
@@ -1183,6 +1213,80 @@ def _trace_metrics(
             else None
         ),
     }
+
+    if task is not None:
+        metrics.update(_trace_date_range_metrics(calls, task=task))
+
+    return metrics
+
+
+def _trace_date_range_metrics(
+    calls: list[dict[str, Any]],
+    *,
+    task: dict[str, Any],
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compare executed timeseries tool-call dates with expected task dates."""
+
+    timeseries_calls = [
+        call
+        for call in calls
+        if call.get("tool_name") == "tec_get_timeseries"
+        and call.get("status") == "ok"
+    ]
+
+    expected_start = task.get("start")
+    expected_end = task.get("end")
+    expected_n_points = _expected_hourly_points_from_task(task)
+
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {
+        "expected_start": expected_start,
+        "expected_end": expected_end,
+        "expected_n_points": expected_n_points,
+        "actual_tool_start": None,
+        "actual_tool_end": None,
+        "agent_timeseries_n_points": None,
+        "start_date_match": None,
+        "end_date_match": None,
+        "date_parse_match": None,
+        "timeseries_n_points_match": None,
+    }
+
+    if not timeseries_calls:
+        return metrics
+
+    first = timeseries_calls[0]
+    first_args = first.get("arguments") or {}
+    first_output = first.get("output") or {}
+    first_metadata = first_output.get("metadata") or {}
+
+    actual_starts = [
+        _date_part((call.get("arguments") or {}).get("start"))
+        for call in timeseries_calls
+    ]
+    actual_ends = [
+        _date_part((call.get("arguments") or {}).get("end"))
+        for call in timeseries_calls
+    ]
+
+    metrics["actual_tool_start"] = _date_part(first_args.get("start"))
+    metrics["actual_tool_end"] = _date_part(first_args.get("end"))
+    metrics["agent_timeseries_n_points"] = first_metadata.get("n_points")
+    metrics["start_date_match"] = all(start == expected_start for start in actual_starts)
+    metrics["end_date_match"] = all(end == expected_end for end in actual_ends)
+    metrics["date_parse_match"] = (
+        metrics["start_date_match"] is True and metrics["end_date_match"] is True
+    )
+
+    if expected_n_points is not None:
+        n_points = [
+            ((call.get("output") or {}).get("metadata") or {}).get("n_points")
+            for call in timeseries_calls
+        ]
+        metrics["timeseries_n_points_match"] = all(
+            item == expected_n_points for item in n_points
+        )
+
+    return metrics
 
 
 def _expected_tool_sequence(
@@ -1415,6 +1519,80 @@ def _extract_high_tec_payload(result: dict[str, Any]) -> dict[str, Any]:
         }
 
     raise KeyError("Could not find high-TEC result")
+
+
+def _extract_timeseries_payload(result: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the first timeseries tool result from supported result shapes."""
+
+    if "timeseries" in result:
+        return result["timeseries"]
+
+    if "series" in result:
+        series = result["series"]
+        if isinstance(series, list):
+            return series[0] if series else None
+        if isinstance(series, dict):
+            return series
+
+    data = result.get("data") or {}
+    series_by_region = data.get("series_by_region")
+    if isinstance(series_by_region, dict) and series_by_region:
+        first = next(iter(series_by_region.values()))
+        if isinstance(first, dict):
+            return first.get("tool_result") or first
+
+    for record in result.get("tool_calls", []):
+        if record.get("tool_name") == "tec_get_timeseries":
+            response = record.get("response") or {}
+            return response.get("result")
+
+    return None
+
+
+def _timeseries_point_metrics(
+    *,
+    agent_series: dict[str, Any] | None,
+    gold_series: dict[str, Any] | None,
+    task: dict[str, Any] | None,
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compare agent and gold timeseries sizes and requested date metadata."""
+
+    agent_meta = (agent_series or {}).get("metadata") or {}
+    gold_meta = (gold_series or {}).get("metadata") or {}
+    expected_n_points = _expected_hourly_points_from_task(task)
+
+    agent_n_points = agent_meta.get("n_points")
+    gold_n_points = gold_meta.get("n_points")
+
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {
+        "agent_timeseries_n_points": agent_n_points,
+        "gold_timeseries_n_points": gold_n_points,
+        "expected_n_points": expected_n_points,
+        "timeseries_n_points_match": (
+            agent_n_points == gold_n_points
+            and (expected_n_points is None or agent_n_points == expected_n_points)
+        ),
+    }
+
+    if agent_meta:
+        metrics["agent_timeseries_requested_start"] = (
+            agent_meta.get("requested_start") or agent_meta.get("start")
+        )
+        metrics["agent_timeseries_requested_end"] = (
+            agent_meta.get("requested_end") or agent_meta.get("end")
+        )
+        metrics["agent_timeseries_actual_start"] = agent_meta.get("actual_start")
+        metrics["agent_timeseries_actual_end"] = agent_meta.get("actual_end")
+
+    if gold_meta:
+        metrics["gold_timeseries_requested_start"] = (
+            gold_meta.get("requested_start") or gold_meta.get("start")
+        )
+        metrics["gold_timeseries_requested_end"] = (
+            gold_meta.get("requested_end") or gold_meta.get("end")
+        )
+
+    return metrics
 
 
 def _extract_stable_payload(result: dict[str, Any]) -> dict[str, Any]:
@@ -1717,3 +1895,34 @@ def _first_interval_field_match(
         return False
 
     return agent_intervals[0].get(field_name) == gold_intervals[0].get(field_name)
+
+
+def _expected_hourly_points_from_task(task: dict[str, Any] | None) -> int | None:
+    """Return expected hourly samples for a task interval, if date-only."""
+
+    if task is None or not task.get("start") or not task.get("end"):
+        return None
+
+    try:
+        start = date.fromisoformat(str(task["start"])[:10])
+        end = date.fromisoformat(str(task["end"])[:10])
+    except Exception:
+        return None
+
+    if end <= start:
+        return None
+
+    return (end - start).days * 24
+
+
+def _date_part(value: Any) -> str | None:
+    """Return YYYY-MM-DD from a date-like value."""
+
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    return text[:10]

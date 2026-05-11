@@ -8,6 +8,7 @@ gold result on the same synthetic task.
 from __future__ import annotations
 
 import sys
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
 
@@ -91,6 +92,8 @@ def main() -> None:
         agent_result=agent_output.tool_results,
         gold_result=gold.result,
         agent_trace=agent_output.trace,
+        task=task_to_dict(task),
+        parsed_task=asdict(agent_output.parsed_task),
     )
 
     print("Metric result:")
@@ -104,6 +107,35 @@ def main() -> None:
     assert metric_result.metrics["threshold_abs_error"] == 0
     assert metric_result.metrics["interval_count_error"] == 0
     assert metric_result.metrics["tool_call_count"] == 3
+    assert metric_result.metrics["start_date_match"] is True
+    assert metric_result.metrics["end_date_match"] is True
+    assert metric_result.metrics["date_parse_match"] is True
+    assert metric_result.metrics["expected_n_points"] == 744
+    assert metric_result.metrics["agent_timeseries_n_points"] == 744
+    assert metric_result.metrics["gold_timeseries_n_points"] == 744
+    assert metric_result.metrics["timeseries_n_points_match"] is True
+
+    wrong_date_trace = deepcopy(agent_output.trace)
+    first_call = wrong_date_trace["calls"][0]
+    first_call["arguments"]["end"] = "2024-03-31"
+    first_call["output"]["metadata"]["requested_end"] = "2024-03-31"
+    first_call["output"]["metadata"]["end"] = "2024-03-31"
+    first_call["output"]["metadata"]["n_points"] = 720
+
+    wrong_date_metric = compare_agent_to_gold(
+        task_id=task.task_id,
+        task_type=task.task_type,
+        agent_result=agent_output.tool_results,
+        gold_result=gold.result,
+        agent_trace=wrong_date_trace,
+        task=task_to_dict(task),
+        parsed_task=asdict(agent_output.parsed_task),
+    )
+
+    assert wrong_date_metric.success is False
+    assert wrong_date_metric.metrics["end_date_match"] is False
+    assert wrong_date_metric.metrics["date_parse_match"] is False
+    assert wrong_date_metric.metrics["timeseries_n_points_match"] is False
 
     multi_server = build_local_mcp_server(run_id=f"multi_agent_{task.task_id}")
     multi_client = LocalMCPClient(multi_server)

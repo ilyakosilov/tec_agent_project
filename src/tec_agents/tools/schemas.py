@@ -53,6 +53,14 @@ class SeriesMetadata(BaseModel):
     region_id: RegionId
     start: str
     end: str
+    requested_start: str | None = None
+    requested_end: str | None = None
+    interval_convention: str = "[start, end)"
+    actual_start: str | None = None
+    actual_end: str | None = None
+    actual_start_time: str | None = None
+    actual_end_time: str | None = None
+    expected_hourly_points: int | None = None
     n_points: int
     finite_points: int
     freq: str | None = None
