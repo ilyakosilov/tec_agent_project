@@ -909,11 +909,14 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
     elif "high_tec" in lower or ("high" in lower and "tec" in lower):
         task_type = "high_tec"
 
+    region_ids: list[str] = []
     region_id = None
     for candidate in list_region_ids():
         if candidate.lower() in lower:
-            region_id = candidate
-            break
+            region_ids.append(candidate)
+
+    if region_ids:
+        region_id = region_ids[0]
 
     q = 0.9
     q_match = re.search(r"\bq\s*=\s*(0(?:\.\d+)?|1(?:\.0+)?)", lower)
@@ -932,6 +935,7 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         "task_type": task_type,
         "dataset_ref": "default",
         "region_id": region_id,
+        "region_ids": region_ids,
         "q": q,
         "start": start,
         "end": end,
@@ -947,6 +951,9 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         "stable_intervals_ready": False,
         "n_stable_intervals": None,
         "series_by_region": {},
+        "stats_by_region": {},
+        "comparison_id": None,
+        "comparison_ready": False,
         "available_artifacts": {},
         "completed_tool_calls": [],
         "missing_goal_artifacts": [],
@@ -988,6 +995,25 @@ def compute_missing_goal_artifacts(task_state: dict[str, Any]) -> list[str]:
             missing.append("stable_intervals")
         return missing
 
+    if task_state.get("task_type") == "compare_regions":
+        missing = []
+        region_ids = [str(item) for item in task_state.get("region_ids") or []]
+        series_by_region = task_state.get("series_by_region") or {}
+        stats_by_region = task_state.get("stats_by_region") or {}
+
+        for region_id in region_ids:
+            if not series_by_region.get(region_id):
+                missing.append(f"series_id for {region_id}")
+
+        for region_id in region_ids:
+            if not stats_by_region.get(region_id):
+                missing.append(f"stats_id for {region_id}")
+
+        if region_ids and not task_state.get("comparison_ready"):
+            missing.append("compare_stats_result")
+
+        return missing
+
     return []
 
 
@@ -1025,6 +1051,9 @@ def update_task_state_from_tool_result(
                 artifacts["actual_end"] = metadata["actual_end"]
             if region_id is not None:
                 task_state.setdefault("series_by_region", {})[str(region_id)] = series_id
+                artifacts.setdefault("series_by_region", {})[
+                    str(region_id)
+                ] = series_id
             if (
                 task_state.get("region_id") in {None, region_id}
                 or task_state.get("task_type") == "high_tec"
@@ -1097,10 +1126,26 @@ def update_task_state_from_tool_result(
     elif tool_name == "tec_compute_series_stats":
         if result.get("stats_id") is not None:
             artifacts.setdefault("stats_ids", []).append(result["stats_id"])
+            region_id = result.get("region_id")
+            if region_id is None:
+                region_id = _region_for_series_id(
+                    task_state,
+                    str(result.get("series_id") or arguments.get("series_id") or ""),
+                )
+            if region_id is not None:
+                task_state.setdefault("stats_by_region", {})[
+                    str(region_id)
+                ] = result["stats_id"]
+                artifacts.setdefault("stats_by_region", {})[
+                    str(region_id)
+                ] = result["stats_id"]
 
     elif tool_name == "tec_compare_stats":
         if result.get("comparison_id") is not None:
+            task_state["comparison_id"] = result["comparison_id"]
+            task_state["comparison_ready"] = True
             artifacts["comparison_id"] = result["comparison_id"]
+            artifacts["compare_stats_result"] = "ready"
 
     task_state["missing_goal_artifacts"] = compute_missing_goal_artifacts(task_state)
 
@@ -1124,6 +1169,24 @@ def record_completed_tool_call(
         "returned_artifacts": _returned_artifacts(response),
     }
     task_state.setdefault("completed_tool_calls", []).append(record)
+
+
+def _region_for_series_id(
+    task_state: dict[str, Any],
+    series_id: str,
+) -> str | None:
+    """Return the region currently associated with a series handle."""
+
+    if not series_id:
+        return None
+
+    for region_id, known_series_id in (
+        task_state.get("series_by_region") or {}
+    ).items():
+        if known_series_id == series_id:
+            return str(region_id)
+
+    return None
 
 
 def build_minimal_observation_message(
@@ -1169,6 +1232,7 @@ def build_state_aware_observation_message(
         "Current task state:",
         f"- task_type: {task_state.get('task_type')}",
         f"- target_region: {task_state.get('region_id')}",
+        f"- target_regions: {task_state.get('region_ids') or []}",
         f"- q: {task_state.get('q')}",
         f"- analysis_period: {task_state.get('analysis_period')}",
         f"- interval_convention: {task_state.get('interval_convention')}",
@@ -1396,6 +1460,9 @@ def _should_request_final_answer(task_state: dict[str, Any]) -> bool:
     if task_state.get("task_type") == "stable_intervals":
         return bool(task_state.get("stable_intervals_ready"))
 
+    if task_state.get("task_type") == "compare_regions":
+        return bool(task_state.get("comparison_ready"))
+
     return False
 
 
@@ -1425,6 +1492,17 @@ def _final_answer_is_allowed(
             task_state.get("stable_intervals_ready")
         )
 
+    if task_state.get("task_type") == "compare_regions":
+        region_count = len(task_state.get("region_ids") or []) or 2
+        expected = (
+            ["tec_get_timeseries"] * region_count
+            + ["tec_compute_series_stats"] * region_count
+            + ["tec_compare_stats"]
+        )
+        return _is_ordered_subsequence(expected, tool_sequence) and bool(
+            task_state.get("comparison_ready")
+        )
+
     return True
 
 
@@ -1449,6 +1527,9 @@ def _returned_artifacts(tool_response: dict[str, Any]) -> dict[str, Any]:
         "threshold_id",
         "stats_id",
         "comparison_id",
+        "region_id",
+        "regions",
+        "stats_ids",
         "n_intervals",
         "threshold_value",
         "value",
@@ -1490,6 +1571,15 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
         n_points = (task_state.get("available_artifacts") or {}).get("n_points")
         if n_points is not None:
             lines.append(f"- time series n_points: {n_points}")
+
+    if task_state.get("task_type") == "compare_regions":
+        series_by_region = task_state.get("series_by_region") or {}
+        for item_region, item_series_id in sorted(series_by_region.items()):
+            lines.append(f"- series_id for {item_region}: {item_series_id}")
+
+        stats_by_region = task_state.get("stats_by_region") or {}
+        for item_region, stats_id in sorted(stats_by_region.items()):
+            lines.append(f"- stats_id for {item_region}: {stats_id}")
 
     if threshold_id is not None:
         lines.append(f"- threshold_id: {threshold_id}")
@@ -1644,6 +1734,29 @@ def _build_available_tools_context(
             "- tec_compute_stability_thresholds: compute stability thresholds from series_id and return threshold_id.",
             "- tec_detect_stable_intervals: detect stable intervals using series_id and threshold_id.",
         ]
+        if task_state.get("analysis_period"):
+            lines.extend(
+                [
+                    "",
+                    f"Analysis period: {task_state['analysis_period']}",
+                    "Interval convention: [start, end), with end exclusive.",
+                    "Use the exclusive end date exactly as shown in tec_get_timeseries arguments.",
+                    "Do not replace the end date with the last calendar day.",
+                ]
+            )
+        return "\n".join(lines)
+
+    if task_type == "compare_regions":
+        lines = [
+            "Available tools for this task:",
+            "- tec_get_timeseries: obtain one TEC time series per target region and return series_id handles.",
+            "- tec_compute_series_stats: compute statistics from a series_id and return stats_id.",
+            "- tec_compare_stats: compare multiple stats_id handles and return comparison_id.",
+            "- Use primitive tools only; do not use aggregate tec_compare_regions.",
+        ]
+        region_ids = task_state.get("region_ids") or []
+        if region_ids:
+            lines.append(f"Target regions: {', '.join(region_ids)}")
         if task_state.get("analysis_period"):
             lines.extend(
                 [

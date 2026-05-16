@@ -288,6 +288,13 @@ def compare_region_comparison(
         metrics["pairwise_delta_count_match"] = (
             len(agent_pairwise) == len(gold_pairwise)
         )
+        metrics.update(
+            _pairwise_delta_metrics(
+                agent_pairwise=agent_pairwise,
+                gold_pairwise=gold_pairwise,
+                metric_names=("mean", "max", "p90"),
+            )
+        )
 
         metrics.update(
             _parse_metrics(
@@ -324,6 +331,9 @@ def compare_region_comparison(
         and metrics.get("max_abs_error_max") == 0
         and metrics.get("p90_abs_error_max") == 0
         and metrics.get("pairwise_delta_count_match") is not False
+        and _zero_or_none(metrics.get("mean_delta_abs_error_max"))
+        and _zero_or_none(metrics.get("max_delta_abs_error_max"))
+        and _zero_or_none(metrics.get("p90_delta_abs_error_max"))
     )
 
     return MetricResult(
@@ -406,6 +416,22 @@ def compare_stable_intervals(
                 gold_top,
                 "std_value",
             )
+
+        metrics["top_stable_interval_start_match"] = metrics.get(
+            "stable_top_interval_start_match"
+        )
+        metrics["top_stable_interval_end_match"] = metrics.get(
+            "stable_top_interval_end_match"
+        )
+        metrics["top_stable_duration_abs_error"] = metrics.get(
+            "stable_duration_abs_error_top"
+        )
+        metrics["top_stable_mean_abs_error"] = metrics.get(
+            "stable_mean_abs_error_top"
+        )
+        metrics["top_stable_std_abs_error"] = metrics.get(
+            "stable_std_abs_error_top"
+        )
 
         metrics.update(
             _parse_metrics(
@@ -770,7 +796,9 @@ def _parse_metrics(
         metrics["task_type_match"] = None
         metrics["region_parse_match"] = None
         metrics["expected_region_id"] = None
+        metrics["expected_region_ids"] = None
         metrics["actual_region_id"] = None
+        metrics["actual_region_ids"] = None
         metrics["actual_region_source"] = "missing"
         metrics["date_parse_match"] = None
         metrics["q_abs_error"] = None
@@ -837,18 +865,30 @@ def _region_parse_metrics(
     if expected_region is not None:
         return {
             "expected_region_id": expected_region,
+            "expected_region_ids": [expected_region],
             "actual_region_id": actual_region,
+            "actual_region_ids": [actual_region] if actual_region is not None else [],
             "actual_region_source": source,
             "region_parse_match": actual_region == expected_region,
         }
 
-    expected_regions = set(task.get("region_ids") or [])
-    parsed_regions = set(parsed.get("region_ids") or [])
+    expected_region_ids = [str(item) for item in task.get("region_ids") or []]
+    parsed_region_ids = [str(item) for item in parsed.get("region_ids") or []]
+    actual_region_ids = parsed_region_ids
+    if not actual_region_ids:
+        actual_region_ids = _timeseries_regions(agent_trace)
+        if actual_region_ids:
+            source = "timeseries_tool_calls"
+
+    expected_regions = set(expected_region_ids)
+    actual_regions = set(actual_region_ids)
     return {
         "expected_region_id": None,
+        "expected_region_ids": expected_region_ids,
         "actual_region_id": None,
+        "actual_region_ids": actual_region_ids,
         "actual_region_source": source,
-        "region_parse_match": parsed_regions == expected_regions,
+        "region_parse_match": actual_regions == expected_regions,
     }
 
 
@@ -895,6 +935,26 @@ def _first_timeseries_region(agent_trace: dict[str, Any] | None) -> str | None:
             return str(region_id)
 
     return None
+
+
+def _timeseries_regions(agent_trace: dict[str, Any] | None) -> list[str]:
+    """Return region_ids from successful timeseries tool calls."""
+
+    if agent_trace is None:
+        return []
+
+    regions: list[str] = []
+    for call in agent_trace.get("calls", []):
+        if (
+            call.get("tool_name") != "tec_get_timeseries"
+            or call.get("status") != "ok"
+        ):
+            continue
+        region_id = (call.get("arguments") or {}).get("region_id")
+        if region_id is not None:
+            regions.append(str(region_id))
+
+    return regions
 
 
 def _orchestration_metrics(
@@ -1619,6 +1679,69 @@ def _stats_tool_call_count(trace: dict[str, Any] | None) -> int | None:
         for call in trace.get("calls", [])
         if call.get("tool_name") == "tec_compute_series_stats"
     )
+
+
+def _pairwise_delta_metrics(
+    *,
+    agent_pairwise: list[dict[str, Any]],
+    gold_pairwise: list[dict[str, Any]],
+    metric_names: tuple[str, ...],
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compare pairwise stats deltas by region-pair and metric name."""
+
+    agent_by_pair = {
+        key: delta
+        for key, delta in (
+            _canonical_pairwise_delta(item) for item in agent_pairwise
+        )
+    }
+    gold_by_pair = {
+        key: delta
+        for key, delta in (
+            _canonical_pairwise_delta(item) for item in gold_pairwise
+        )
+    }
+
+    shared_pairs = sorted(set(agent_by_pair).intersection(gold_by_pair))
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {
+        "pairwise_delta_region_pair_match": set(agent_by_pair) == set(gold_by_pair),
+        "shared_pairwise_delta_count": len(shared_pairs),
+    }
+
+    for metric_name in metric_names:
+        errors: list[float] = []
+        for pair_key in shared_pairs:
+            agent_value = agent_by_pair[pair_key].get(metric_name)
+            gold_value = gold_by_pair[pair_key].get(metric_name)
+            if agent_value is None or gold_value is None:
+                continue
+            errors.append(abs(_as_float(agent_value) - _as_float(gold_value)))
+
+        metrics[f"{metric_name}_delta_abs_error_avg"] = _avg(errors)
+        metrics[f"{metric_name}_delta_abs_error_max"] = (
+            max(errors) if errors else None
+        )
+
+    return metrics
+
+
+def _canonical_pairwise_delta(
+    item: dict[str, Any],
+) -> tuple[tuple[str, str], dict[str, float | None]]:
+    """Return pair key and deltas in canonical pair orientation."""
+
+    left = item.get("left_region_id") or item.get("left_stats_id")
+    right = item.get("right_region_id") or item.get("right_stats_id")
+    left_text = str(left)
+    right_text = str(right)
+    key = tuple(sorted((left_text, right_text)))
+    sign = 1.0 if (left_text, right_text) == key else -1.0
+    delta = item.get("delta") or {}
+    canonical_delta = {
+        str(metric): (None if value is None else sign * _as_float(value))
+        for metric, value in delta.items()
+    }
+    return key, canonical_delta
 
 
 def _extract_high_tec_payload(result: dict[str, Any]) -> dict[str, Any]:

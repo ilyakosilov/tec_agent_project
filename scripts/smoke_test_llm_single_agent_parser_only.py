@@ -418,6 +418,65 @@ Done.
 """.strip()
 
 
+class FakeCompareRegionsModel:
+    """Fake model that emits a primitive compare-regions chain."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.midlat_series_id = ""
+        self.highlat_series_id = ""
+        self.midlat_stats_id = ""
+        self.highlat_stats_id = ""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            self.midlat_series_id = latest_artifact(messages, "series_id")
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "highlat_north", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            self.highlat_series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_series_stats", "arguments": {{"series_id": "{self.midlat_series_id}", "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"]}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 4:
+            self.midlat_stats_id = latest_artifact(messages, "stats_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_series_stats", "arguments": {{"series_id": "{self.highlat_series_id}", "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"]}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 5:
+            self.highlat_stats_id = latest_artifact(messages, "stats_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compare_stats", "arguments": {{"stats_ids": ["{self.midlat_stats_id}", "{self.highlat_stats_id}"], "metrics": ["mean", "max", "p90"]}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Region comparison completed from tool artifacts.
+</final_answer>
+""".strip()
+
+
 def build_agent(
     model,
     run_id: str,
@@ -563,6 +622,41 @@ more garbage
     assert malformed_result.stray_tool_call_tag_count == 1
     assert malformed_result.cleaned_output_changed_count >= 1
     assert malformed_result.parse_error_count == 0
+
+    compare_agent = build_agent(
+        FakeCompareRegionsModel(),
+        run_id="smoke_llm_single_agent_compare_regions",
+    )
+    compare_result = compare_agent.run(
+        "Compare TEC statistics for midlat_europe and highlat_north in March 2024"
+    )
+
+    assert compare_result.success is True
+    assert compare_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_get_timeseries",
+        "tec_compute_series_stats",
+        "tec_compute_series_stats",
+        "tec_compare_stats",
+    ]
+    assert compare_result.missing_goal_artifacts == []
+    assert compare_result.available_artifacts.get("comparison_id")
+
+    compare_snapshots = compare_result.state_snapshots
+    assert len(compare_snapshots) == 5
+    assert "series_id for highlat_north" in compare_snapshots[0][
+        "missing_goal_artifacts"
+    ]
+    assert "stats_id for midlat_europe" in compare_snapshots[1][
+        "missing_goal_artifacts"
+    ]
+    assert "stats_id for highlat_north" in compare_snapshots[2][
+        "missing_goal_artifacts"
+    ]
+    assert compare_snapshots[3]["missing_goal_artifacts"] == [
+        "compare_stats_result"
+    ]
+    assert compare_snapshots[4]["missing_goal_artifacts"] == []
 
     repeat_then_recover_model = FakeRepeatThenRecoverModel()
     repeat_then_recover_agent = build_agent(

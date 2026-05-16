@@ -199,6 +199,37 @@ def main() -> None:
     assert stable_metric.metrics["expected_n_points"] == 744
     assert stable_metric.metrics["timeseries_n_points_match"] is True
 
+    compare_task = tasks[2]
+    compare_gold = GoldRunner().run(compare_task)
+    assert compare_gold.status == "success"
+    assert compare_gold.result is not None
+
+    compare_server = build_local_mcp_server(run_id=f"agent_{compare_task.task_id}")
+    compare_client = LocalMCPClient(compare_server)
+    compare_agent = RuleBasedSingleAgent(client=compare_client, dataset_ref="smoke")
+    compare_output = compare_agent.run(compare_task.query)
+
+    compare_metric = compare_agent_to_gold(
+        task_id=compare_task.task_id,
+        task_type=compare_task.task_type,
+        agent_result=compare_output.tool_results,
+        gold_result=compare_gold.result,
+        agent_trace=compare_output.trace,
+        task=task_to_dict(compare_task),
+        parsed_task=asdict(compare_output.parsed_task),
+    )
+
+    assert compare_metric.success is True
+    assert compare_metric.metrics["region_set_match"] is True
+    assert compare_metric.metrics["compare_stats_present"] is True
+    assert compare_metric.metrics["pairwise_delta_count_match"] is True
+    assert compare_metric.metrics["mean_abs_error_max"] == 0
+    assert compare_metric.metrics["max_abs_error_max"] == 0
+    assert compare_metric.metrics["p90_abs_error_max"] == 0
+    assert compare_metric.metrics["mean_delta_abs_error_max"] == 0
+    assert compare_metric.metrics["max_delta_abs_error_max"] == 0
+    assert compare_metric.metrics["p90_delta_abs_error_max"] == 0
+
     multi_server = build_local_mcp_server(run_id=f"multi_agent_{task.task_id}")
     multi_client = LocalMCPClient(multi_server)
     multi_agent = RuleBasedMultiAgent(client=multi_client, dataset_ref="smoke")
