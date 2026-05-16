@@ -71,6 +71,10 @@ class LLMSingleAgentResult:
     unknown_format_count: int
     multi_tool_call_output_count: int
     multi_final_answer_output_count: int
+    malformed_wrapper_count: int
+    stray_tool_call_tag_count: int
+    stray_final_answer_tag_count: int
+    cleaned_output_changed_count: int
     repair_attempt_count: int
     repeated_tool_call_count: int
     stalled_loop_detected: bool
@@ -80,6 +84,7 @@ class LLMSingleAgentResult:
     completed_tool_calls: list[dict[str, Any]]
     available_artifacts: dict[str, Any]
     missing_goal_artifacts: list[str]
+    state_snapshots: list[dict[str, Any]]
     artifact_usage_failure: bool
     tool_sequence: list[str]
     success: bool
@@ -140,6 +145,16 @@ class LLMSingleAgent:
         step_records: list[LLMSingleAgentStep] = []
         tool_records: list[dict[str, Any]] = []
         tool_sequence: list[str] = []
+        output_diagnostics = task_state.setdefault(
+            "output_diagnostics",
+            {
+                "malformed_wrapper_count": 0,
+                "stray_tool_call_tag_count": 0,
+                "stray_final_answer_tag_count": 0,
+                "cleaned_output_changed_count": 0,
+            },
+        )
+        task_state.setdefault("state_snapshots", [])
         parse_error_count = 0
         invalid_json_count = 0
         unknown_format_count = 0
@@ -189,6 +204,21 @@ class LLMSingleAgent:
             if not cleaned_output.strip():
                 warnings.append("cleaning_failed")
                 cleaned_output = raw_output
+            if cleaned_output.strip() != raw_output.strip():
+                output_diagnostics["cleaned_output_changed_count"] += 1
+
+            wrapper_anomalies = detect_output_wrapper_anomalies(
+                raw_output,
+                cleaned_output,
+            )
+            if wrapper_anomalies["malformed_wrapper_count"]:
+                warnings.append("malformed_output_wrapper")
+            if wrapper_anomalies["stray_tool_call_tag_count"]:
+                warnings.append("stray_tool_call_tag")
+            if wrapper_anomalies["stray_final_answer_tag_count"]:
+                warnings.append("stray_final_answer_tag")
+            for key, value in wrapper_anomalies.items():
+                output_diagnostics[key] += value
 
             cleaned_model_outputs.append(cleaned_output)
             parsed = _parse_agent_output(cleaned_output)
@@ -199,8 +229,8 @@ class LLMSingleAgent:
                 if not success:
                     artifact_usage_failure = True
                     error_message = (
-                        "Final answer produced before required high_tec tools "
-                        "completed."
+                        "Final answer produced before required task artifacts "
+                        "were completed."
                     )
                 record = LLMSingleAgentStep(
                     step=step,
@@ -542,6 +572,13 @@ class LLMSingleAgent:
                     arguments=tool_call.arguments,
                     response=response_dict,
                 )
+                task_state.setdefault("state_snapshots", []).append(
+                    build_state_snapshot(
+                        step=step,
+                        tool_name=tool_call.name,
+                        task_state=task_state,
+                    )
+                )
 
             record = LLMSingleAgentStep(
                 step=step,
@@ -688,6 +725,8 @@ class LLMSingleAgent:
     ) -> LLMSingleAgentResult:
         """Build an LLMSingleAgentResult from accumulated state."""
 
+        output_diagnostics = task_state.get("output_diagnostics") or {}
+
         return LLMSingleAgentResult(
             answer=answer,
             parsed_task={
@@ -706,6 +745,18 @@ class LLMSingleAgent:
             unknown_format_count=unknown_format_count,
             multi_tool_call_output_count=multi_tool_call_output_count,
             multi_final_answer_output_count=multi_final_answer_output_count,
+            malformed_wrapper_count=int(
+                output_diagnostics.get("malformed_wrapper_count") or 0
+            ),
+            stray_tool_call_tag_count=int(
+                output_diagnostics.get("stray_tool_call_tag_count") or 0
+            ),
+            stray_final_answer_tag_count=int(
+                output_diagnostics.get("stray_final_answer_tag_count") or 0
+            ),
+            cleaned_output_changed_count=int(
+                output_diagnostics.get("cleaned_output_changed_count") or 0
+            ),
             repair_attempt_count=repair_attempt_count,
             repeated_tool_call_count=repeated_tool_call_count,
             stalled_loop_detected=stalled_loop_detected,
@@ -717,6 +768,7 @@ class LLMSingleAgent:
             missing_goal_artifacts=list(
                 task_state.get("missing_goal_artifacts") or []
             ),
+            state_snapshots=list(task_state.get("state_snapshots") or []),
             artifact_usage_failure=artifact_usage_failure,
             tool_sequence=tool_sequence,
             success=success,
@@ -793,6 +845,43 @@ def count_final_answer_blocks(text: str) -> int:
     return len(_FINAL_ANSWER_BLOCK_RE.findall(text))
 
 
+def detect_output_wrapper_anomalies(
+    raw_text: str,
+    cleaned_text: str,
+) -> dict[str, int]:
+    """Detect non-fatal wrapper noise around an otherwise parseable block."""
+
+    open_tool = len(
+        re.findall(r"<tool_call\b[^>]*>", raw_text, flags=re.IGNORECASE)
+    )
+    close_tool = len(re.findall(r"</tool_call>", raw_text, flags=re.IGNORECASE))
+    open_final = len(
+        re.findall(r"<final_answer\b[^>]*>", raw_text, flags=re.IGNORECASE)
+    )
+    close_final = len(
+        re.findall(r"</final_answer>", raw_text, flags=re.IGNORECASE)
+    )
+
+    stray_tool = max(0, open_tool - close_tool)
+    stray_final = max(0, open_final - close_final)
+    cleaned_lower = cleaned_text.lstrip().lower()
+
+    malformed = 1 if stray_tool or stray_final else 0
+    if (
+        "<tool_call" in raw_text.lower()
+        and cleaned_lower.startswith("<final_answer")
+        and count_tool_call_blocks(raw_text) == 0
+    ):
+        malformed = 1
+        stray_tool = max(1, stray_tool)
+
+    return {
+        "malformed_wrapper_count": malformed,
+        "stray_tool_call_tag_count": stray_tool,
+        "stray_final_answer_tag_count": stray_final,
+    }
+
+
 def canonical_arguments_json(arguments: dict[str, Any]) -> str:
     """Return stable JSON for comparing repeated tool calls."""
 
@@ -854,10 +943,20 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
         "threshold_id": None,
         "intervals_ready": False,
         "n_intervals": None,
+        "stability_threshold_id": None,
+        "stable_intervals_ready": False,
+        "n_stable_intervals": None,
         "series_by_region": {},
         "available_artifacts": {},
         "completed_tool_calls": [],
         "missing_goal_artifacts": [],
+        "state_snapshots": [],
+        "output_diagnostics": {
+            "malformed_wrapper_count": 0,
+            "stray_tool_call_tag_count": 0,
+            "stray_final_answer_tag_count": 0,
+            "cleaned_output_changed_count": 0,
+        },
     }
     task_state["missing_goal_artifacts"] = compute_missing_goal_artifacts(task_state)
     return task_state
@@ -874,6 +973,19 @@ def compute_missing_goal_artifacts(task_state: dict[str, Any]) -> list[str]:
             missing.append("threshold_id")
         if not task_state.get("intervals_ready"):
             missing.append("high_tec_intervals")
+        return missing
+
+    if task_state.get("task_type") == "stable_intervals":
+        missing = []
+        if not task_state.get("series_id"):
+            missing.append("series_id")
+        if not (
+            task_state.get("stability_threshold_id")
+            or task_state.get("threshold_id")
+        ):
+            missing.append("stability_threshold_id")
+        if not task_state.get("stable_intervals_ready"):
+            missing.append("stable_intervals")
         return missing
 
     return []
@@ -933,6 +1045,24 @@ def update_task_state_from_tool_result(
             task_state["series_id"] = result["series_id"]
             artifacts["series_id"] = result["series_id"]
 
+    elif tool_name == "tec_compute_stability_thresholds":
+        threshold_id = result.get("threshold_id")
+        if threshold_id is not None:
+            task_state["stability_threshold_id"] = threshold_id
+            artifacts["stability_threshold_id"] = threshold_id
+            artifacts["threshold_id"] = threshold_id
+        if result.get("series_id") is not None:
+            task_state["series_id"] = result["series_id"]
+            artifacts["series_id"] = result["series_id"]
+        for key in [
+            "std_threshold",
+            "range_threshold",
+            "max_std",
+            "max_range",
+        ]:
+            if result.get(key) is not None:
+                artifacts[key] = result[key]
+
     elif tool_name == "tec_detect_high_intervals":
         task_state["intervals_ready"] = True
         task_state["n_intervals"] = result.get("n_intervals")
@@ -946,6 +1076,22 @@ def update_task_state_from_tool_result(
             artifacts["series_id"] = result["series_id"]
         if result.get("threshold_id") is not None:
             task_state["threshold_id"] = result["threshold_id"]
+            artifacts["threshold_id"] = result["threshold_id"]
+
+    elif tool_name == "tec_detect_stable_intervals":
+        task_state["stable_intervals_ready"] = True
+        task_state["n_stable_intervals"] = result.get("n_intervals")
+        artifacts["stable_intervals"] = "ready"
+        if result.get("n_intervals") is not None:
+            artifacts["n_stable_intervals"] = result["n_intervals"]
+        if result.get("intervals") is not None:
+            artifacts["stable_intervals"] = result["intervals"]
+        if result.get("series_id") is not None:
+            task_state["series_id"] = result["series_id"]
+            artifacts["series_id"] = result["series_id"]
+        if result.get("threshold_id") is not None:
+            task_state["stability_threshold_id"] = result["threshold_id"]
+            artifacts["stability_threshold_id"] = result["threshold_id"]
             artifacts["threshold_id"] = result["threshold_id"]
 
     elif tool_name == "tec_compute_series_stats":
@@ -1066,6 +1212,25 @@ def build_state_aware_observation_message(
         )
 
     return "\n".join(lines)
+
+
+def build_state_snapshot(
+    *,
+    step: int,
+    tool_name: str,
+    task_state: dict[str, Any],
+) -> dict[str, Any]:
+    """Return a compact task-state snapshot after a successful tool call."""
+
+    return {
+        "step": step,
+        "tool_name": tool_name,
+        "task_type": task_state.get("task_type"),
+        "available_artifacts": dict(task_state.get("available_artifacts") or {}),
+        "missing_goal_artifacts": list(
+            task_state.get("missing_goal_artifacts") or []
+        ),
+    }
 
 
 def build_tool_observation_message(
@@ -1225,10 +1390,13 @@ def _normalize_date_argument(value: Any) -> str | None:
 def _should_request_final_answer(task_state: dict[str, Any]) -> bool:
     """Return True when the next model turn is expected to be a final answer."""
 
-    return (
-        task_state.get("task_type") == "high_tec"
-        and bool(task_state.get("intervals_ready"))
-    )
+    if task_state.get("task_type") == "high_tec":
+        return bool(task_state.get("intervals_ready"))
+
+    if task_state.get("task_type") == "stable_intervals":
+        return bool(task_state.get("stable_intervals_ready"))
+
+    return False
 
 
 def _final_answer_is_allowed(
@@ -1237,17 +1405,27 @@ def _final_answer_is_allowed(
 ) -> bool:
     """Validate that a final answer is not premature for known task types."""
 
-    if task_state.get("task_type") != "high_tec":
-        return True
+    if task_state.get("task_type") == "high_tec":
+        expected = [
+            "tec_get_timeseries",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals",
+        ]
+        return _is_ordered_subsequence(expected, tool_sequence) and bool(
+            task_state.get("intervals_ready")
+        )
 
-    expected = [
-        "tec_get_timeseries",
-        "tec_compute_high_threshold",
-        "tec_detect_high_intervals",
-    ]
-    return _is_ordered_subsequence(expected, tool_sequence) and bool(
-        task_state.get("intervals_ready")
-    )
+    if task_state.get("task_type") == "stable_intervals":
+        expected = [
+            "tec_get_timeseries",
+            "tec_compute_stability_thresholds",
+            "tec_detect_stable_intervals",
+        ]
+        return _is_ordered_subsequence(expected, tool_sequence) and bool(
+            task_state.get("stable_intervals_ready")
+        )
+
+    return True
 
 
 def _is_ordered_subsequence(expected: list[str], actual: list[str]) -> bool:
@@ -1302,6 +1480,7 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
     region_id = task_state.get("region_id")
     series_id = task_state.get("series_id")
     threshold_id = task_state.get("threshold_id")
+    stability_threshold_id = task_state.get("stability_threshold_id")
 
     if series_id is not None:
         if region_id is not None:
@@ -1315,9 +1494,18 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
     if threshold_id is not None:
         lines.append(f"- threshold_id: {threshold_id}")
 
+    if stability_threshold_id is not None:
+        lines.append(f"- stability_threshold_id: {stability_threshold_id}")
+
     if task_state.get("intervals_ready"):
         n_intervals = task_state.get("n_intervals")
         lines.append(f"- high TEC intervals: ready; n_intervals={n_intervals}")
+
+    if task_state.get("stable_intervals_ready"):
+        n_stable_intervals = task_state.get("n_stable_intervals")
+        lines.append(
+            f"- stable intervals: ready; n_stable_intervals={n_stable_intervals}"
+        )
 
     stats_ids = (task_state.get("available_artifacts") or {}).get("stats_ids") or []
     for stats_id in stats_ids:
@@ -1436,6 +1624,25 @@ def _build_available_tools_context(
             "- tec_get_timeseries: obtain a TEC time series and return series_id.",
             "- tec_compute_high_threshold: compute a high TEC threshold from series_id and return threshold_id.",
             "- tec_detect_high_intervals: detect high TEC intervals using series_id and threshold_id.",
+        ]
+        if task_state.get("analysis_period"):
+            lines.extend(
+                [
+                    "",
+                    f"Analysis period: {task_state['analysis_period']}",
+                    "Interval convention: [start, end), with end exclusive.",
+                    "Use the exclusive end date exactly as shown in tec_get_timeseries arguments.",
+                    "Do not replace the end date with the last calendar day.",
+                ]
+            )
+        return "\n".join(lines)
+
+    if task_type == "stable_intervals":
+        lines = [
+            "Available tools for this task:",
+            "- tec_get_timeseries: obtain a TEC time series and return series_id.",
+            "- tec_compute_stability_thresholds: compute stability thresholds from series_id and return threshold_id.",
+            "- tec_detect_stable_intervals: detect stable intervals using series_id and threshold_id.",
         ]
         if task_state.get("analysis_period"):
             lines.extend(
@@ -1626,6 +1833,7 @@ __all__ = [
     "build_date_range_correction_message",
     "build_missing_field_repair_message",
     "build_repeated_tool_call_repair_message",
+    "build_state_snapshot",
     "build_tool_observation_message",
     "build_tool_calling_instruction",
     "build_unknown_format_repair_message",
@@ -1633,6 +1841,7 @@ __all__ = [
     "clean_model_output",
     "count_final_answer_blocks",
     "count_tool_call_blocks",
+    "detect_output_wrapper_anomalies",
     "infer_task_state",
     "safe_compact_json",
     "validate_tool_call_date_range",

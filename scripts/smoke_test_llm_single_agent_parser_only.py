@@ -337,6 +337,87 @@ class FakeWrongDateRepeatedModel:
 """.strip()
 
 
+class FakeStableIntervalsModel:
+    """Fake model that emits the expected stable-interval primitive chain."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_stability_thresholds", "arguments": {{"series_id": "{series_id}", "window_minutes": 180, "method": "quantile", "q_delta": 0.6, "q_std": 0.6}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_stable_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 180, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Stable interval detection completed from tool artifacts.
+</final_answer>
+""".strip()
+
+
+class FakeMalformedFinalAnswerWrapperModel:
+    """Fake model that finishes with a stray opening tool_call tag."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            threshold_id = latest_artifact(messages, "threshold_id")
+            series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{series_id}", "threshold_id": "{threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<tool_call>
+<final_answer>
+Done.
+</final_answer>
+""".strip()
+
+
 def build_agent(
     model,
     run_id: str,
@@ -442,6 +523,46 @@ more garbage
     assert repair_result.invalid_json_count == 1
     assert repair_result.repair_attempt_count > 0
     assert repair_result.artifact_usage_failure is False
+
+    stable_agent = build_agent(
+        FakeStableIntervalsModel(),
+        run_id="smoke_llm_single_agent_stable_intervals",
+    )
+    stable_result = stable_agent.run(
+        "Find stable TEC intervals for midlat_europe in March 2024"
+    )
+
+    assert stable_result.success is True
+    assert stable_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_stability_thresholds",
+        "tec_detect_stable_intervals",
+    ]
+    assert stable_result.missing_goal_artifacts == []
+    assert stable_result.available_artifacts.get("stability_threshold_id")
+    assert stable_result.available_artifacts.get("n_stable_intervals") is not None
+
+    stable_snapshots = stable_result.state_snapshots
+    assert len(stable_snapshots) == 3
+    assert "stability_threshold_id" in stable_snapshots[0]["missing_goal_artifacts"]
+    assert "stable_intervals" in stable_snapshots[0]["missing_goal_artifacts"]
+    assert stable_snapshots[1]["missing_goal_artifacts"] == ["stable_intervals"]
+    assert stable_snapshots[2]["missing_goal_artifacts"] == []
+
+    malformed_agent = build_agent(
+        FakeMalformedFinalAnswerWrapperModel(),
+        run_id="smoke_llm_single_agent_malformed_final_wrapper",
+    )
+    malformed_result = malformed_agent.run(
+        "Find high TEC intervals for midlat_europe in March 2024 with q=0.9"
+    )
+
+    assert malformed_result.success is True
+    assert malformed_result.answer == "Done."
+    assert malformed_result.malformed_wrapper_count == 1
+    assert malformed_result.stray_tool_call_tag_count == 1
+    assert malformed_result.cleaned_output_changed_count >= 1
+    assert malformed_result.parse_error_count == 0
 
     repeat_then_recover_model = FakeRepeatThenRecoverModel()
     repeat_then_recover_agent = build_agent(

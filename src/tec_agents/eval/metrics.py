@@ -148,14 +148,6 @@ def compare_high_tec(
         metrics["gold_n_intervals"] = gold_n_intervals
         metrics["interval_count_error"] = abs(agent_n_intervals - gold_n_intervals)
         metrics["interval_count_match"] = agent_n_intervals == gold_n_intervals
-        metrics.update(
-            _timeseries_point_metrics(
-                agent_series=agent_series,
-                gold_series=gold_series,
-                task=task,
-            )
-        )
-
         agent_peak = _max_peak(agent_intervals.get("intervals", []))
         gold_peak = _max_peak(gold_intervals.get("intervals", []))
 
@@ -180,7 +172,13 @@ def compare_high_tec(
             field_name="end",
         )
 
-        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _parse_metrics(
+                task=task,
+                parsed_task=parsed_task,
+                agent_trace=agent_trace,
+            )
+        )
         metrics.update(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
@@ -192,6 +190,18 @@ def compare_high_tec(
 
         if agent_trace is not None:
             metrics.update(_trace_metrics(agent_trace, task_type="high_tec", task=task))
+
+        agent_series_for_points = (
+            _extract_timeseries_payload_from_trace(agent_trace)
+            or agent_series
+        )
+        metrics.update(
+            _timeseries_point_metrics(
+                agent_series=agent_series_for_points,
+                gold_series=gold_series,
+                task=task,
+            )
+        )
 
     except Exception as exc:
         errors.append(str(exc))
@@ -279,7 +289,13 @@ def compare_region_comparison(
             len(agent_pairwise) == len(gold_pairwise)
         )
 
-        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _parse_metrics(
+                task=task,
+                parsed_task=parsed_task,
+                agent_trace=agent_trace,
+            )
+        )
         metrics.update(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
@@ -337,6 +353,8 @@ def compare_stable_intervals(
     try:
         agent_stable = _extract_stable_payload(agent_result)
         gold_stable = _extract_stable_payload(gold_result)
+        agent_series = _extract_timeseries_payload(agent_result)
+        gold_series = _extract_timeseries_payload(gold_result)
 
         agent_intervals = agent_stable["intervals"]
         gold_intervals = gold_stable["intervals"]
@@ -389,7 +407,13 @@ def compare_stable_intervals(
                 "std_value",
             )
 
-        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _parse_metrics(
+                task=task,
+                parsed_task=parsed_task,
+                agent_trace=agent_trace,
+            )
+        )
         metrics.update(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
@@ -408,6 +432,18 @@ def compare_stable_intervals(
                 )
             )
 
+        agent_series_for_points = (
+            _extract_timeseries_payload_from_trace(agent_trace)
+            or agent_series
+        )
+        metrics.update(
+            _timeseries_point_metrics(
+                agent_series=agent_series_for_points,
+                gold_series=gold_series,
+                task=task,
+            )
+        )
+
     except Exception as exc:
         errors.append(str(exc))
 
@@ -422,6 +458,8 @@ def compare_stable_intervals(
         and _zero_or_none(metrics.get("stable_duration_abs_error_top"))
         and _zero_or_none(metrics.get("stable_mean_abs_error_top"))
         and _zero_or_none(metrics.get("stable_std_abs_error_top"))
+        and metrics.get("date_parse_match") is not False
+        and metrics.get("timeseries_n_points_match") is not False
     )
 
     return MetricResult(
@@ -543,7 +581,13 @@ def compare_report(
             stable_count_errors
         )
 
-        metrics.update(_parse_metrics(task=task, parsed_task=parsed_task))
+        metrics.update(
+            _parse_metrics(
+                task=task,
+                parsed_task=parsed_task,
+                agent_trace=agent_trace,
+            )
+        )
         metrics.update(
             _orchestration_metrics(
                 orchestration_steps=orchestration_steps,
@@ -716,6 +760,7 @@ def _parse_metrics(
     *,
     task: dict[str, Any] | None,
     parsed_task: dict[str, Any] | None,
+    agent_trace: dict[str, Any] | None = None,
 ) -> dict[str, float | int | bool | str | list[str] | None]:
     """Compare structured task fields with parsed agent task."""
 
@@ -724,6 +769,9 @@ def _parse_metrics(
     if task is None or parsed_task is None:
         metrics["task_type_match"] = None
         metrics["region_parse_match"] = None
+        metrics["expected_region_id"] = None
+        metrics["actual_region_id"] = None
+        metrics["actual_region_source"] = "missing"
         metrics["date_parse_match"] = None
         metrics["q_abs_error"] = None
         return metrics
@@ -741,14 +789,13 @@ def _parse_metrics(
         metrics["start_date_match"] is True and metrics["end_date_match"] is True
     )
 
-    if task.get("task_type") == "high_tec":
-        metrics["region_parse_match"] = parsed.get("region_id") == task.get(
-            "region_id"
+    metrics.update(
+        _region_parse_metrics(
+            task=task,
+            parsed=parsed,
+            agent_trace=agent_trace,
         )
-    else:
-        parsed_regions = set(parsed.get("region_ids") or [])
-        task_regions = set(task.get("region_ids") or [])
-        metrics["region_parse_match"] = parsed_regions == task_regions
+    )
 
     try:
         metrics["q_abs_error"] = abs(float(parsed.get("q")) - float(task.get("q")))
@@ -768,6 +815,86 @@ def _normalized_parsed_task(parsed_task: dict[str, Any]) -> dict[str, Any]:
         return merged
 
     return parsed_task
+
+
+def _region_parse_metrics(
+    *,
+    task: dict[str, Any],
+    parsed: dict[str, Any],
+    agent_trace: dict[str, Any] | None,
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compare region fields, falling back to executed timeseries calls."""
+
+    expected_region = _expected_single_region(task)
+    actual_region = _parsed_single_region(parsed)
+    source = "parsed_task" if actual_region is not None else "missing"
+
+    if actual_region is None:
+        actual_region = _first_timeseries_region(agent_trace)
+        if actual_region is not None:
+            source = "first_timeseries_tool_call"
+
+    if expected_region is not None:
+        return {
+            "expected_region_id": expected_region,
+            "actual_region_id": actual_region,
+            "actual_region_source": source,
+            "region_parse_match": actual_region == expected_region,
+        }
+
+    expected_regions = set(task.get("region_ids") or [])
+    parsed_regions = set(parsed.get("region_ids") or [])
+    return {
+        "expected_region_id": None,
+        "actual_region_id": None,
+        "actual_region_source": source,
+        "region_parse_match": parsed_regions == expected_regions,
+    }
+
+
+def _expected_single_region(task: dict[str, Any]) -> str | None:
+    """Return the single expected region for one-region tasks."""
+
+    region_id = task.get("region_id")
+    if region_id is not None:
+        return str(region_id)
+
+    region_ids = task.get("region_ids") or []
+    if len(region_ids) == 1:
+        return str(region_ids[0])
+
+    return None
+
+
+def _parsed_single_region(parsed: dict[str, Any]) -> str | None:
+    """Return a single region from parsed task data, if present."""
+
+    region_id = parsed.get("region_id")
+    if region_id is not None:
+        return str(region_id)
+
+    region_ids = parsed.get("region_ids") or []
+    if len(region_ids) == 1:
+        return str(region_ids[0])
+
+    return None
+
+
+def _first_timeseries_region(agent_trace: dict[str, Any] | None) -> str | None:
+    """Return region_id from the first successful timeseries tool call."""
+
+    if agent_trace is None:
+        return None
+
+    for call in agent_trace.get("calls", []):
+        if call.get("tool_name") != "tec_get_timeseries":
+            continue
+        arguments = call.get("arguments") or {}
+        region_id = arguments.get("region_id")
+        if region_id is not None:
+            return str(region_id)
+
+    return None
 
 
 def _orchestration_metrics(
@@ -1549,6 +1676,26 @@ def _extract_timeseries_payload(result: dict[str, Any]) -> dict[str, Any] | None
     return None
 
 
+def _extract_timeseries_payload_from_trace(
+    agent_trace: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Extract the first successful timeseries output from an execution trace."""
+
+    if agent_trace is None:
+        return None
+
+    for call in agent_trace.get("calls", []):
+        if (
+            call.get("tool_name") == "tec_get_timeseries"
+            and call.get("status") == "ok"
+        ):
+            output = call.get("output")
+            if isinstance(output, dict):
+                return output
+
+    return None
+
+
 def _timeseries_point_metrics(
     *,
     agent_series: dict[str, Any] | None,
@@ -1563,15 +1710,18 @@ def _timeseries_point_metrics(
 
     agent_n_points = agent_meta.get("n_points")
     gold_n_points = gold_meta.get("n_points")
+    if expected_n_points is not None:
+        n_points_match = (
+            agent_n_points == gold_n_points == expected_n_points
+        )
+    else:
+        n_points_match = agent_n_points is not None and agent_n_points == gold_n_points
 
     metrics: dict[str, float | int | bool | str | list[str] | None] = {
         "agent_timeseries_n_points": agent_n_points,
         "gold_timeseries_n_points": gold_n_points,
         "expected_n_points": expected_n_points,
-        "timeseries_n_points_match": (
-            agent_n_points == gold_n_points
-            and (expected_n_points is None or agent_n_points == expected_n_points)
-        ),
+        "timeseries_n_points_match": n_points_match,
     }
 
     if agent_meta:

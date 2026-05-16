@@ -28,7 +28,7 @@ from tec_agents.agents.single_agent import RuleBasedSingleAgent
 from tec_agents.data.datasets import register_dataset
 from tec_agents.eval.gold_runner import GoldRunner
 from tec_agents.eval.metrics import compare_agent_to_gold, summarize_metric_results
-from tec_agents.eval.task_set import build_smoke_tasks, task_to_dict
+from tec_agents.eval.task_set import EvalTask, build_smoke_tasks, task_to_dict
 from tec_agents.mcp.client import LocalMCPClient
 from tec_agents.mcp.server import build_local_mcp_server
 
@@ -115,6 +115,27 @@ def main() -> None:
     assert metric_result.metrics["gold_timeseries_n_points"] == 744
     assert metric_result.metrics["timeseries_n_points_match"] is True
 
+    parsed_without_region = asdict(agent_output.parsed_task)
+    parsed_without_region["region_id"] = None
+    parsed_without_region["region_ids"] = ()
+    region_fallback_metric = compare_agent_to_gold(
+        task_id=task.task_id,
+        task_type=task.task_type,
+        agent_result=agent_output.tool_results,
+        gold_result=gold.result,
+        agent_trace=agent_output.trace,
+        task=task_to_dict(task),
+        parsed_task=parsed_without_region,
+    )
+
+    assert region_fallback_metric.metrics["region_parse_match"] is True
+    assert region_fallback_metric.metrics["expected_region_id"] == "midlat_europe"
+    assert region_fallback_metric.metrics["actual_region_id"] == "midlat_europe"
+    assert (
+        region_fallback_metric.metrics["actual_region_source"]
+        == "first_timeseries_tool_call"
+    )
+
     wrong_date_trace = deepcopy(agent_output.trace)
     first_call = wrong_date_trace["calls"][0]
     first_call["arguments"]["end"] = "2024-03-31"
@@ -136,6 +157,47 @@ def main() -> None:
     assert wrong_date_metric.metrics["end_date_match"] is False
     assert wrong_date_metric.metrics["date_parse_match"] is False
     assert wrong_date_metric.metrics["timeseries_n_points_match"] is False
+
+    stable_task = EvalTask(
+        task_id="smoke_stable_midlat_europe_march_2024",
+        query="Find stable TEC intervals for midlat_europe in March 2024",
+        task_type="stable_intervals",
+        dataset_ref="smoke",
+        region_id="midlat_europe",
+        region_ids=("midlat_europe",),
+        start="2024-03-01",
+        end="2024-04-01",
+        expected_tool_sequence=(
+            "tec_get_timeseries",
+            "tec_compute_stability_thresholds",
+            "tec_detect_stable_intervals",
+        ),
+    )
+
+    stable_gold = GoldRunner().run(stable_task)
+    assert stable_gold.status == "success"
+    assert stable_gold.result is not None
+
+    stable_server = build_local_mcp_server(run_id=f"agent_{stable_task.task_id}")
+    stable_client = LocalMCPClient(stable_server)
+    stable_agent = RuleBasedSingleAgent(client=stable_client, dataset_ref="smoke")
+    stable_output = stable_agent.run(stable_task.query)
+
+    stable_metric = compare_agent_to_gold(
+        task_id=stable_task.task_id,
+        task_type=stable_task.task_type,
+        agent_result=stable_output.tool_results,
+        gold_result=stable_gold.result,
+        agent_trace=stable_output.trace,
+        task=task_to_dict(stable_task),
+        parsed_task=asdict(stable_output.parsed_task),
+    )
+
+    assert stable_metric.success is True
+    assert stable_metric.metrics["gold_timeseries_n_points"] == 744
+    assert stable_metric.metrics["agent_timeseries_n_points"] == 744
+    assert stable_metric.metrics["expected_n_points"] == 744
+    assert stable_metric.metrics["timeseries_n_points_match"] is True
 
     multi_server = build_local_mcp_server(run_id=f"multi_agent_{task.task_id}")
     multi_client = LocalMCPClient(multi_server)
