@@ -517,6 +517,9 @@ def compare_report(
         gold_report = _extract_report_payload(gold_result)
 
         metrics["report_present"] = bool(agent_report)
+        metrics["final_answer_present"] = bool(
+            agent_result.get("final_answer") or agent_result.get("answer")
+        )
 
         agent_regions = set(agent_report.get("regions") or agent_report.get("region_ids") or [])
         gold_regions = set(gold_report.get("regions") or gold_report.get("region_ids") or [])
@@ -536,6 +539,10 @@ def compare_report(
         metrics["report_basic_stats_present"] = "basic_stats" in agent_sections
         metrics["report_high_tec_present"] = "high_tec" in agent_sections
         metrics["report_stable_intervals_present"] = "stable_intervals" in agent_sections
+        missing_required = sorted(required_sections.difference(set(agent_sections)))
+        metrics["required_artifacts_present"] = not missing_required
+        metrics["missing_required_artifacts"] = missing_required
+        metrics["report_grounded_in_artifacts"] = not missing_required
 
         basic_mean_errors: list[float] = []
         basic_max_errors: list[float] = []
@@ -632,8 +639,10 @@ def compare_report(
     success = (
         not errors
         and metrics.get("report_present") is True
+        and metrics.get("final_answer_present") is True
         and metrics.get("report_region_set_match") is True
         and metrics.get("report_required_sections_present") is True
+        and metrics.get("legacy_report_tool_used") is not True
         and _zero_or_none(metrics.get("report_mean_abs_error_avg"))
         and _zero_or_none(metrics.get("report_max_abs_error_avg"))
         and _zero_or_none(metrics.get("report_p90_abs_error_avg"))

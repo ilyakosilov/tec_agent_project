@@ -477,6 +477,70 @@ Region comparison completed from tool artifacts.
 """.strip()
 
 
+class FakeReportModel:
+    """Fake model that emits a primitive single-region report chain."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.series_id = ""
+        self.high_threshold_id = ""
+        self.stability_threshold_id = ""
+
+    def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.calls += 1
+
+        if self.calls == 1:
+            return """
+<tool_call>
+{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "smoke_llm", "region_id": "midlat_europe", "start": "2024-03-01", "end": "2024-04-01"}}
+</tool_call>
+""".strip()
+
+        if self.calls == 2:
+            self.series_id = latest_artifact(messages, "series_id")
+            return f"""
+<tool_call>
+{{"name": "tec_compute_series_stats", "arguments": {{"series_id": "{self.series_id}", "metrics": ["mean", "median", "min", "max", "std", "p90", "p95"]}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 3:
+            return f"""
+<tool_call>
+{{"name": "tec_compute_high_threshold", "arguments": {{"series_id": "{self.series_id}", "method": "quantile", "q": 0.9}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 4:
+            self.high_threshold_id = latest_artifact(messages, "threshold_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_high_intervals", "arguments": {{"series_id": "{self.series_id}", "threshold_id": "{self.high_threshold_id}", "min_duration_minutes": 0, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 5:
+            return f"""
+<tool_call>
+{{"name": "tec_compute_stability_thresholds", "arguments": {{"series_id": "{self.series_id}", "window_minutes": 180, "method": "quantile", "q_delta": 0.6, "q_std": 0.6}}}}
+</tool_call>
+""".strip()
+
+        if self.calls == 6:
+            self.stability_threshold_id = latest_artifact(messages, "threshold_id")
+            return f"""
+<tool_call>
+{{"name": "tec_detect_stable_intervals", "arguments": {{"series_id": "{self.series_id}", "threshold_id": "{self.stability_threshold_id}", "min_duration_minutes": 180, "merge_gap_minutes": 60}}}}
+</tool_call>
+""".strip()
+
+        return """
+<final_answer>
+Report completed from statistics, high TEC, and stable interval artifacts.
+</final_answer>
+""".strip()
+
+
 def build_agent(
     model,
     run_id: str,
@@ -657,6 +721,28 @@ more garbage
         "compare_stats_result"
     ]
     assert compare_snapshots[4]["missing_goal_artifacts"] == []
+
+    report_agent = build_agent(
+        FakeReportModel(),
+        run_id="smoke_llm_single_agent_report",
+    )
+    report_result = report_agent.run(
+        "Build a concise TEC analysis report for midlat_europe from 2024-03-01 to 2024-04-01. Include high TEC intervals, stable intervals, key statistics, and a short interpretation based only on computed artifacts."
+    )
+
+    assert report_result.success is True
+    assert report_result.tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_series_stats",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+        "tec_compute_stability_thresholds",
+        "tec_detect_stable_intervals",
+    ]
+    assert report_result.missing_goal_artifacts == []
+    assert "math" in report_result.tool_results
+    report_inputs = report_result.tool_results["math"]["report_inputs"]
+    assert {"basic_stats", "high_tec", "stable_intervals"}.issubset(report_inputs)
 
     repeat_then_recover_model = FakeRepeatThenRecoverModel()
     repeat_then_recover_agent = build_agent(

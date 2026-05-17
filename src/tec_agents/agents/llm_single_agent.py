@@ -1014,6 +1014,26 @@ def compute_missing_goal_artifacts(task_state: dict[str, Any]) -> list[str]:
 
         return missing
 
+    if task_state.get("task_type") == "report":
+        missing = []
+        if not task_state.get("series_id"):
+            missing.append("series_id")
+        region_id = task_state.get("region_id")
+        stats_by_region = task_state.get("stats_by_region") or {}
+        if region_id is not None and not stats_by_region.get(str(region_id)):
+            missing.append("basic_stats")
+        elif region_id is None and not stats_by_region:
+            missing.append("basic_stats")
+        if not task_state.get("threshold_id"):
+            missing.append("high_threshold_id")
+        if not task_state.get("intervals_ready"):
+            missing.append("high_tec_intervals")
+        if not task_state.get("stability_threshold_id"):
+            missing.append("stability_threshold_id")
+        if not task_state.get("stable_intervals_ready"):
+            missing.append("stable_intervals")
+        return missing
+
     return []
 
 
@@ -1463,6 +1483,9 @@ def _should_request_final_answer(task_state: dict[str, Any]) -> bool:
     if task_state.get("task_type") == "compare_regions":
         return bool(task_state.get("comparison_ready"))
 
+    if task_state.get("task_type") == "report":
+        return not compute_missing_goal_artifacts(task_state)
+
     return False
 
 
@@ -1501,6 +1524,19 @@ def _final_answer_is_allowed(
         )
         return _is_ordered_subsequence(expected, tool_sequence) and bool(
             task_state.get("comparison_ready")
+        )
+
+    if task_state.get("task_type") == "report":
+        expected = [
+            "tec_get_timeseries",
+            "tec_compute_series_stats",
+            "tec_compute_high_threshold",
+            "tec_detect_high_intervals",
+            "tec_compute_stability_thresholds",
+            "tec_detect_stable_intervals",
+        ]
+        return _is_ordered_subsequence(expected, tool_sequence) and not (
+            compute_missing_goal_artifacts(task_state)
         )
 
     return True
@@ -1769,6 +1805,29 @@ def _build_available_tools_context(
             )
         return "\n".join(lines)
 
+    if task_type == "report":
+        lines = [
+            "Available tools for this task:",
+            "- tec_get_timeseries: obtain the TEC time series and return series_id.",
+            "- tec_compute_series_stats: compute basic statistics from series_id and return stats_id.",
+            "- tec_compute_high_threshold: compute a high TEC threshold from series_id and return threshold_id.",
+            "- tec_detect_high_intervals: detect high TEC intervals using series_id and threshold_id.",
+            "- tec_compute_stability_thresholds: compute stability thresholds from series_id and return threshold_id.",
+            "- tec_detect_stable_intervals: detect stable intervals using series_id and threshold_id.",
+            "- Build the final answer from computed artifacts; do not use tec_build_report.",
+        ]
+        if task_state.get("analysis_period"):
+            lines.extend(
+                [
+                    "",
+                    f"Analysis period: {task_state['analysis_period']}",
+                    "Interval convention: [start, end), with end exclusive.",
+                    "Use the exclusive end date exactly as shown in tec_get_timeseries arguments.",
+                    "Do not replace the end date with the last calendar day.",
+                ]
+            )
+        return "\n".join(lines)
+
     lines = ["Available deterministic tools:"]
     for tool in tools:
         lines.append(f"- {tool.name}: {tool.description}")
@@ -1913,6 +1972,82 @@ def _derive_tool_results(tool_records: list[dict[str, Any]]) -> dict[str, Any]:
                     for name, result in reversed(ok_results)
                     if name == "tec_compare_stats"
                 ),
+            }
+        )
+
+    elif names == [
+        "tec_get_timeseries",
+        "tec_compute_series_stats",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+        "tec_compute_stability_thresholds",
+        "tec_detect_stable_intervals",
+    ]:
+        series = ok_results[0][1]
+        stats = ok_results[1][1]
+        high_threshold = ok_results[2][1]
+        high_intervals = ok_results[3][1]
+        stable_thresholds = ok_results[4][1]
+        stable_intervals = ok_results[5][1]
+        region_id = (
+            stats.get("region_id")
+            or (series.get("metadata") or {}).get("region_id")
+            or "unknown"
+        )
+        payload.update(
+            {
+                "timeseries": series,
+                "stats": stats,
+                "threshold": high_threshold,
+                "high_intervals": high_intervals,
+                "stable_thresholds": stable_thresholds,
+                "stable_intervals": stable_intervals,
+                "regions": [region_id],
+                "region_ids": [region_id],
+                "data": {
+                    "series_by_region": {
+                        region_id: {
+                            "series_id": series.get("series_id"),
+                            "tool_result": series,
+                            "metadata": series.get("metadata"),
+                        }
+                    },
+                    "regions": [region_id],
+                    "dataset_ref": (series.get("metadata") or {}).get("dataset_ref"),
+                    "start": (series.get("metadata") or {}).get("requested_start"),
+                    "end": (series.get("metadata") or {}).get("requested_end"),
+                },
+                "math": {
+                    "report_inputs": {
+                        "basic_stats": {
+                            "by_region": {
+                                region_id: {
+                                    "stats_id": stats.get("stats_id"),
+                                    "series_id": stats.get("series_id"),
+                                    "stats": stats,
+                                    "metrics": stats.get("metrics", {}),
+                                }
+                            },
+                            "comparison": None,
+                        },
+                        "high_tec": {
+                            "by_region": {
+                                region_id: {
+                                    "threshold": high_threshold,
+                                    "intervals": high_intervals,
+                                }
+                            }
+                        },
+                        "stable_intervals": {
+                            "by_region": {
+                                region_id: {
+                                    "thresholds": stable_thresholds,
+                                    "intervals": stable_intervals,
+                                }
+                            }
+                        },
+                    }
+                },
             }
         )
 
