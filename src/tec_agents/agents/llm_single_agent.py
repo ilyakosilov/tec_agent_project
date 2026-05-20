@@ -797,7 +797,15 @@ Textual tool-call protocol:
 - If a tool result gives an artifact id, use that id in the next tool call.
 - You will receive task state updates after tool calls.
 - Use available artifacts from state updates.
-- Do not repeat completed successful tool calls with the same arguments.
+- You may call the same tool multiple times when the arguments are different
+  and the task requires it, for example loading several regions or computing
+  statistics for several different series.
+- Do not repeat an identical tool call with the same tool name and same arguments
+  after it has already succeeded.
+- If an identical successful call already exists, reuse the returned artifact
+  id from the previous result instead of calling the tool again.
+- Repeating a successful call with identical arguments is a loop/redundant
+  action.
 - If an artifact id is available, use it when relevant.
 - You must choose the next tool yourself.
 - Date intervals use [start, end): start is inclusive and end is exclusive.
@@ -1263,37 +1271,23 @@ def build_state_aware_observation_message(
     artifact_lines = _available_artifact_lines(task_state)
     lines.extend([f"  {line}" for line in artifact_lines] or ["  - <none>"])
 
-    missing = task_state.get("missing_goal_artifacts") or []
-    lines.append("- missing_goal_artifacts:")
-    lines.extend([f"  - {item}" for item in missing] or ["  - <none>"])
-
     completed = task_state.get("completed_tool_calls") or []
     lines.append("- completed_successful_tool_calls:")
     lines.extend(_completed_tool_call_lines(completed) or ["  - <none>"])
 
-    if missing:
-        lines.extend(
-            [
-                "",
-                "Rules:",
-                "- Do not repeat a completed successful tool call with the same arguments unless its result is invalid.",
-                "- Choose the next valid tool yourself based on the available artifacts and the remaining goal.",
-                "- If an artifact id is available, use it when relevant.",
-                "- Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
-                "- Do not include explanations, markdown, role labels, or schema text outside the tags.",
-            ]
-        )
-    else:
-        lines.extend(
-            [
-                "",
-                "Rules:",
-                "- If the user goal is complete, return <final_answer> grounded only in tool results.",
-                "- Do not call additional tools unless necessary.",
-                "- Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
-                "- Do not include explanations, markdown, role labels, or schema text outside the tags.",
-            ]
-        )
+    lines.extend(
+        [
+            "",
+            "Rules:",
+            "- You may call the same tool name multiple times when the arguments are different and the task requires it.",
+            "- Do not repeat a completed successful tool call with the same tool name and identical arguments unless its result is invalid.",
+            "- If an artifact id is available from a previous successful call, reuse that artifact id when relevant.",
+            "- Choose the next valid tool yourself based on the user request, available artifacts, and completed calls.",
+            "- If enough computed artifacts are available, return <final_answer> grounded only in tool results.",
+            "- Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
+            "- Do not include explanations, markdown, role labels, or schema text outside the tags.",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -1349,13 +1343,12 @@ def build_repeated_tool_call_correction_message(
             "Available artifacts from completed calls:",
             *(_available_artifact_lines(task_state) or ["- <none>"]),
             "",
-            "The user goal is not complete yet."
-            if task_state.get("missing_goal_artifacts")
-            else "The user goal appears complete.",
-            "Still missing:",
-            *(_missing_goal_artifact_lines(task_state) or ["- <none>"]),
+            "Completed successful tool calls:",
+            *(_completed_tool_call_lines(task_state.get("completed_tool_calls") or []) or ["- <none>"]),
             "",
-            "Choose a different valid tool that uses the available artifacts and helps complete the remaining goal.",
+            "A tool name may be used again when the arguments are different and the task requires it.",
+            "Use already returned artifact ids from successful calls when they are relevant.",
+            "Choose a different valid tool if more computation is needed, or return a final answer if the task is complete.",
             f"Do not repeat {repeated_tool_name} with the same arguments.",
             "",
             "Return exactly one <tool_call>...</tool_call> or <final_answer>...</final_answer>.",
@@ -1615,7 +1608,7 @@ def _available_artifact_lines(task_state: dict[str, Any]) -> list[str]:
 
         stats_by_region = task_state.get("stats_by_region") or {}
         for item_region, stats_id in sorted(stats_by_region.items()):
-            lines.append(f"- stats_id for {item_region}: {stats_id}")
+            lines.append(f"- stats_id: {stats_id} (region={item_region})")
 
     if threshold_id is not None:
         lines.append(f"- threshold_id: {threshold_id}")

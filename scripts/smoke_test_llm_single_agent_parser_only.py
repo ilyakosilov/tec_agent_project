@@ -342,8 +342,10 @@ class FakeStableIntervalsModel:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.message_history: list[list[dict[str, str]]] = []
 
     def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.message_history.append([dict(message) for message in messages])
         self.calls += 1
 
         if self.calls == 1:
@@ -423,12 +425,14 @@ class FakeCompareRegionsModel:
 
     def __init__(self) -> None:
         self.calls = 0
+        self.message_history: list[list[dict[str, str]]] = []
         self.midlat_series_id = ""
         self.highlat_series_id = ""
         self.midlat_stats_id = ""
         self.highlat_stats_id = ""
 
     def generate(self, messages, max_new_tokens=512, temperature=0.0, do_sample=False):
+        self.message_history.append([dict(message) for message in messages])
         self.calls += 1
 
         if self.calls == 1:
@@ -557,6 +561,40 @@ def build_agent(
     )
 
 
+def observation_messages(message_history: list[list[dict[str, str]]]) -> list[str]:
+    """Return state/tool observation messages seen by a fake model."""
+
+    messages: list[str] = []
+    for batch in message_history:
+        for message in batch:
+            content = message.get("content", "")
+            if "<tool_result>" in content or "Current task state:" in content:
+                messages.append(content)
+    return messages
+
+
+def assert_no_missing_goal_prompt_leak(messages: list[str]) -> None:
+    """Ensure model-visible observations do not reveal missing goal artifacts."""
+
+    assert messages, "No observation messages were captured."
+    forbidden = [
+        "missing_goal_artifacts",
+        "missing goals",
+        "remaining goals",
+        "remaining goal",
+        "what is still missing",
+        "still missing",
+        "stats_id for",
+        "high_tec_intervals",
+        "\n  - stable_intervals",
+        "\n- stable_intervals",
+    ]
+    for content in messages:
+        lower_content = content.lower()
+        for text in forbidden:
+            assert text not in lower_content, (text, content)
+
+
 def main() -> None:
     dataset_path = PROJECT_ROOT / "data" / "examples" / "smoke_llm_single_agent.csv"
     build_tiny_dataset(dataset_path)
@@ -647,8 +685,9 @@ more garbage
     assert repair_result.repair_attempt_count > 0
     assert repair_result.artifact_usage_failure is False
 
+    stable_model = FakeStableIntervalsModel()
     stable_agent = build_agent(
-        FakeStableIntervalsModel(),
+        stable_model,
         run_id="smoke_llm_single_agent_stable_intervals",
     )
     stable_result = stable_agent.run(
@@ -671,6 +710,9 @@ more garbage
     assert "stable_intervals" in stable_snapshots[0]["missing_goal_artifacts"]
     assert stable_snapshots[1]["missing_goal_artifacts"] == ["stable_intervals"]
     assert stable_snapshots[2]["missing_goal_artifacts"] == []
+    assert_no_missing_goal_prompt_leak(
+        observation_messages(stable_model.message_history)
+    )
 
     malformed_agent = build_agent(
         FakeMalformedFinalAnswerWrapperModel(),
@@ -687,8 +729,9 @@ more garbage
     assert malformed_result.cleaned_output_changed_count >= 1
     assert malformed_result.parse_error_count == 0
 
+    compare_model = FakeCompareRegionsModel()
     compare_agent = build_agent(
-        FakeCompareRegionsModel(),
+        compare_model,
         run_id="smoke_llm_single_agent_compare_regions",
     )
     compare_result = compare_agent.run(
@@ -721,6 +764,9 @@ more garbage
         "compare_stats_result"
     ]
     assert compare_snapshots[4]["missing_goal_artifacts"] == []
+    assert_no_missing_goal_prompt_leak(
+        observation_messages(compare_model.message_history)
+    )
 
     report_agent = build_agent(
         FakeReportModel(),
@@ -766,6 +812,9 @@ more garbage
     assert repeat_then_recover_result.state_feedback_mode == "state_aware"
     assert "tec_compute_high_threshold" not in repeat_then_recover_model.correction_message
     assert '<tool_call>\n{"name":' not in repeat_then_recover_model.correction_message
+    assert_no_missing_goal_prompt_leak(
+        [repeat_then_recover_model.correction_message]
+    )
 
     wrong_date_model = FakeWrongDateThenRecoverModel()
     wrong_date_agent = build_agent(

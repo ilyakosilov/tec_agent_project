@@ -25,6 +25,7 @@ from tec_agents.llm.prompts import (
     build_report_agent_system_prompt,
     build_single_agent_system_prompt,
 )
+from tec_agents.agents.llm_single_agent import build_tool_calling_instruction
 
 
 def assert_nonempty(name: str, prompt: str) -> None:
@@ -116,6 +117,25 @@ def main() -> None:
             "tec_compute_high_threshold",
             "tec_detect_stable_intervals",
             "tec_compare_stats",
+            "same tool multiple times",
+            "arguments are different",
+            "do not repeat an identical tool call",
+            "same arguments",
+            "reuse the returned artifact",
+            "loop/redundant action",
+        ],
+    )
+
+    assert_contains_all(
+        "llm_single_agent_tool_calling_instruction",
+        build_tool_calling_instruction(),
+        [
+            "same tool multiple times",
+            "arguments are different",
+            "do not repeat an identical tool call",
+            "same arguments",
+            "reuse the returned artifact",
+            "loop/redundant",
         ],
     )
 

@@ -123,6 +123,15 @@ Single-agent role:
 - If a tool call can be retried, retry it at most two times.
 - If required data cannot be recovered, return an error answer that names the
   missing artifact.
+- You may call the same tool multiple times when the arguments are different
+  and the task requires it, for example loading several regions or computing
+  statistics for several different series.
+- Do not repeat an identical tool call with the same tool name and same arguments
+  after it has already succeeded.
+- If an identical successful call already exists, reuse the returned artifact
+  id from the previous result instead of calling the tool again.
+- Repeating a successful call with identical arguments is considered a
+  loop/redundant action.
 - For compare_regions and report tasks, obtain all required time series first,
   then perform computation.
 - For report tasks, do not use aggregate report tools; build the report from
