@@ -24,6 +24,31 @@ from tec_agents.eval.task_set import EvalTask
 
 NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "02_qwen_single_agent_colab.ipynb"
 
+EXPECTED_QUERIES = {
+    "hightec_midlat_europe": (
+        "Find high TEC intervals for midlat_europe from 2024-03-01 "
+        "to 2024-04-01 using q=0.90 threshold."
+    ),
+    "stable_midlat_europe": (
+        "Find stable TEC intervals for midlat_europe from 2024-03-01 "
+        "to 2024-04-01 using the configured stability parameters."
+    ),
+    "compare_midlat_europe_highlat_north": (
+        "Compare TEC statistics for midlat_europe and highlat_north "
+        "from 2024-03-01 to 2024-04-01."
+    ),
+    "compare_three_regions": (
+        "Compare TEC statistics for equatorial_atlantic, midlat_europe, "
+        "and highlat_north from 2024-03-01 to 2024-04-01."
+    ),
+    "report_midlat_europe": (
+        "Build a concise TEC analysis report for midlat_europe from "
+        "2024-03-01 to 2024-04-01. Include basic statistics, high TEC "
+        "intervals, stable intervals, and a short interpretation based only "
+        "on computed artifacts."
+    ),
+}
+
 
 def _source(cell: dict) -> str:
     source = cell.get("source") or ""
@@ -53,6 +78,26 @@ def main() -> None:
     helper_cell = next(
         cell for cell in data["cells"] if "def build_query" in _source(cell)
     )
+    preview_markdown_index = next(
+        index
+        for index, cell in enumerate(data["cells"])
+        if "## Planned test questions" in _source(cell)
+    )
+    preview_code = _source(data["cells"][preview_markdown_index + 1])
+    assert "preview_rows" in preview_code
+    assert "build_query(config)" in preview_code
+    assert "build_expected_tool_sequence(config)" in preview_code
+    for forbidden in [
+        "LLMSingleAgent(",
+        "LocalQwenChatModel",
+        "GoldRunner",
+        "compare_agent_to_gold",
+        "build_local_mcp_server",
+        ".call_tool(",
+        "agent.run(",
+        "model =",
+    ]:
+        assert forbidden not in preview_code
 
     namespace: dict[str, object] = {"EvalTask": EvalTask}
     exec(_source(config_cell), namespace)
@@ -77,6 +122,9 @@ def main() -> None:
         sequence = build_expected_tool_sequence(config)
         task = build_eval_task(config, query, sequence)
 
+        assert config.get("query")
+        assert config["query"] == EXPECTED_QUERIES[config["preset_id"]]
+        assert query == config["query"]
         assert isinstance(query, str) and query
         assert isinstance(sequence, list) and sequence
         assert isinstance(task, EvalTask)
@@ -100,6 +148,8 @@ def main() -> None:
                 "tec_compute_stability_thresholds",
                 "tec_detect_stable_intervals",
             ]
+
+    assert {config["query"] for config in task_configs} == set(EXPECTED_QUERIES.values())
 
     print("Qwen batch notebook smoke test finished successfully.")
 
