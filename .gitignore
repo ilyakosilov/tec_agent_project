@@ -254,3 +254,6 @@ secrets.json
 .installers
 
 data/examples
+
+
+!tec_regions_2024_01_01_to_2024_04_01_hourly.parquet
