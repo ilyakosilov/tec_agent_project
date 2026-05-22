@@ -1,0 +1,47 @@
+[
+  {
+    "Preset": "hightec_midlat_europe",
+    "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+    "Full LLM role order": "data_agent",
+    "Full LLM protocol errors": 3,
+    "Full LLM forbidden tools": 3,
+    "Full LLM stalled?": true,
+    "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "stable_midlat_europe",
+    "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+    "Full LLM role order": "data_agent",
+    "Full LLM protocol errors": 4,
+    "Full LLM forbidden tools": 4,
+    "Full LLM stalled?": true,
+    "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+    "Full LLM role order": "math_agent",
+    "Full LLM protocol errors": 4,
+    "Full LLM forbidden tools": 4,
+    "Full LLM stalled?": true,
+    "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+    "Full LLM role order": "math_agent",
+    "Full LLM protocol errors": 4,
+    "Full LLM forbidden tools": 4,
+    "Full LLM stalled?": true,
+    "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+    "Full LLM role order": "data_agent",
+    "Full LLM protocol errors": 4,
+    "Full LLM forbidden tools": 4,
+    "Full LLM stalled?": true,
+    "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+  }
+]

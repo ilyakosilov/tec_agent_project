@@ -1,0 +1,38 @@
+[
+  {
+    "Architecture": "Qwen single-agent",
+    "Model": "Qwen/Qwen3.5-4B",
+    "n_tasks": 5,
+    "success_rate": "40%",
+    "overall_ok_rate": "0%",
+    "tool_sequence_match_rate": "60%",
+    "role_order_match_rate": "n/a",
+    "artifact_flow_valid_rate": "n/a",
+    "stalled_loop_rate": "60%",
+    "forbidden_tool_call_rate": "n/a"
+  },
+  {
+    "Architecture": "Rule-based multi-agent",
+    "Model": "none",
+    "n_tasks": 5,
+    "success_rate": "100%",
+    "overall_ok_rate": "100%",
+    "tool_sequence_match_rate": "100%",
+    "role_order_match_rate": "100%",
+    "artifact_flow_valid_rate": "100%",
+    "stalled_loop_rate": "0%",
+    "forbidden_tool_call_rate": "n/a"
+  },
+  {
+    "Architecture": "Qwen full LLM multi-agent",
+    "Model": "Qwen/Qwen3.5-4B",
+    "n_tasks": 5,
+    "success_rate": "0%",
+    "overall_ok_rate": "0%",
+    "tool_sequence_match_rate": "0%",
+    "role_order_match_rate": "0%",
+    "artifact_flow_valid_rate": "0%",
+    "stalled_loop_rate": "100%",
+    "forbidden_tool_call_rate": "100%"
+  }
+]

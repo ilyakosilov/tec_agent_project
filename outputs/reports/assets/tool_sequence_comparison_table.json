@@ -1,0 +1,37 @@
+[
+  {
+    "Preset": "hightec_midlat_europe",
+    "Expected sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+    "Qwen single actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+    "Rule multi actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+    "Full LLM multi actual": "tec_get_timeseries"
+  },
+  {
+    "Preset": "stable_midlat_europe",
+    "Expected sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+    "Qwen single actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+    "Rule multi actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+    "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+    "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+    "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+    "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+    "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats",
+    "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+    "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Expected sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+    "Qwen single actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_stability_thresholds -> tec_detect_stable_intervals -> tec_compute_high_threshold",
+    "Rule multi actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+    "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"
+  }
+]

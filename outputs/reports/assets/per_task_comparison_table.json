@@ -1,0 +1,42 @@
+[
+  {
+    "Preset": "hightec_midlat_europe",
+    "Task type": "high_tec",
+    "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False",
+    "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+    "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"
+  },
+  {
+    "Preset": "stable_midlat_europe",
+    "Task type": "stable_intervals",
+    "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False",
+    "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+    "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Task type": "compare_regions",
+    "Qwen single-agent result": "success=False, overall=False, seq=True, stall=True",
+    "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+    "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Task type": "compare_regions",
+    "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+    "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Task type": "report",
+    "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+    "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+    "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+  }
+]

@@ -1,0 +1,42 @@
+[
+  {
+    "Preset ID": "hightec_midlat_europe",
+    "Task type": "high_tec",
+    "Natural-language query": "Find high TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using q=0.90 threshold.",
+    "Regions": "midlat_europe",
+    "Period": "[2024-03-01, 2024-04-01)",
+    "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals"
+  },
+  {
+    "Preset ID": "stable_midlat_europe",
+    "Task type": "stable_intervals",
+    "Natural-language query": "Find stable TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using the configured stability parameters.",
+    "Regions": "midlat_europe",
+    "Period": "[2024-03-01, 2024-04-01)",
+    "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"
+  },
+  {
+    "Preset ID": "compare_midlat_europe_highlat_north",
+    "Task type": "compare_regions",
+    "Natural-language query": "Compare TEC statistics for midlat_europe and highlat_north from 2024-03-01 to 2024-04-01.",
+    "Regions": "midlat_europe, highlat_north",
+    "Period": "[2024-03-01, 2024-04-01)",
+    "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"
+  },
+  {
+    "Preset ID": "compare_three_regions",
+    "Task type": "compare_regions",
+    "Natural-language query": "Compare TEC statistics for equatorial_atlantic, midlat_europe, and highlat_north from 2024-03-01 to 2024-04-01.",
+    "Regions": "equatorial_atlantic, midlat_europe, highlat_north",
+    "Period": "[2024-03-01, 2024-04-01)",
+    "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"
+  },
+  {
+    "Preset ID": "report_midlat_europe",
+    "Task type": "report",
+    "Natural-language query": "Build a concise TEC analysis report for midlat_europe from 2024-03-01 to 2024-04-01. Include basic statistics, high TEC intervals, stable intervals, and a short interpretation based only on computed artifacts.",
+    "Regions": "midlat_europe",
+    "Period": "[2024-03-01, 2024-04-01)",
+    "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"
+  }
+]

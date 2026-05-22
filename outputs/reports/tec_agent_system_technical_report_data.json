@@ -1,0 +1,573 @@
+{
+  "generated_at": "2026-05-22T23:35:35",
+  "project_root": "D:\\tec_agent_project",
+  "architecture_summary": [
+    {
+      "Architecture": "Qwen single-agent",
+      "Model": "Qwen/Qwen3.5-4B",
+      "n_tasks": 5,
+      "success_rate": "40%",
+      "overall_ok_rate": "0%",
+      "tool_sequence_match_rate": "60%",
+      "role_order_match_rate": "n/a",
+      "artifact_flow_valid_rate": "n/a",
+      "stalled_loop_rate": "60%",
+      "forbidden_tool_call_rate": "n/a"
+    },
+    {
+      "Architecture": "Rule-based multi-agent",
+      "Model": "none",
+      "n_tasks": 5,
+      "success_rate": "100%",
+      "overall_ok_rate": "100%",
+      "tool_sequence_match_rate": "100%",
+      "role_order_match_rate": "100%",
+      "artifact_flow_valid_rate": "100%",
+      "stalled_loop_rate": "0%",
+      "forbidden_tool_call_rate": "n/a"
+    },
+    {
+      "Architecture": "Qwen full LLM multi-agent",
+      "Model": "Qwen/Qwen3.5-4B",
+      "n_tasks": 5,
+      "success_rate": "0%",
+      "overall_ok_rate": "0%",
+      "tool_sequence_match_rate": "0%",
+      "role_order_match_rate": "0%",
+      "artifact_flow_valid_rate": "0%",
+      "stalled_loop_rate": "100%",
+      "forbidden_tool_call_rate": "100%"
+    }
+  ],
+  "per_task_comparison": [
+    {
+      "Preset": "hightec_midlat_europe",
+      "Task type": "high_tec",
+      "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False",
+      "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+      "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"
+    },
+    {
+      "Preset": "stable_midlat_europe",
+      "Task type": "stable_intervals",
+      "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False",
+      "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+      "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Task type": "compare_regions",
+      "Qwen single-agent result": "success=False, overall=False, seq=True, stall=True",
+      "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+      "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Task type": "compare_regions",
+      "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+      "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Task type": "report",
+      "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None",
+      "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True",
+      "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"
+    }
+  ],
+  "tool_sequence_comparison": [
+    {
+      "Preset": "hightec_midlat_europe",
+      "Expected sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+      "Qwen single actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+      "Rule multi actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals",
+      "Full LLM multi actual": "tec_get_timeseries"
+    },
+    {
+      "Preset": "stable_midlat_europe",
+      "Expected sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+      "Qwen single actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+      "Rule multi actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+      "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+      "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+      "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+      "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+      "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats",
+      "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats",
+      "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Expected sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+      "Qwen single actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_stability_thresholds -> tec_detect_stable_intervals -> tec_compute_high_threshold",
+      "Rule multi actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals",
+      "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"
+    }
+  ],
+  "role_protocol_errors": [
+    {
+      "Preset": "hightec_midlat_europe",
+      "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+      "Full LLM role order": "data_agent",
+      "Full LLM protocol errors": 3,
+      "Full LLM forbidden tools": 3,
+      "Full LLM stalled?": true,
+      "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "stable_midlat_europe",
+      "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+      "Full LLM role order": "data_agent",
+      "Full LLM protocol errors": 4,
+      "Full LLM forbidden tools": 4,
+      "Full LLM stalled?": true,
+      "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+      "Full LLM role order": "math_agent",
+      "Full LLM protocol errors": 4,
+      "Full LLM forbidden tools": 4,
+      "Full LLM stalled?": true,
+      "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+      "Full LLM role order": "math_agent",
+      "Full LLM protocol errors": 4,
+      "Full LLM forbidden tools": 4,
+      "Full LLM stalled?": true,
+      "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent",
+      "Full LLM role order": "data_agent",
+      "Full LLM protocol errors": 4,
+      "Full LLM forbidden tools": 4,
+      "Full LLM stalled?": true,
+      "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."
+    }
+  ],
+  "numeric_metrics_comparison": [
+    {
+      "Preset": "hightec_midlat_europe",
+      "Metric": "threshold_abs_error",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0.0,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "hightec_midlat_europe",
+      "Metric": "interval_count_error",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0,
+      "Rule multi-agent error": 0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "hightec_midlat_europe",
+      "Metric": "global_peak_abs_error",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0.0,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "stable_midlat_europe",
+      "Metric": "stable_interval_count_error",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0,
+      "Rule multi-agent error": 0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "stable_midlat_europe",
+      "Metric": "top_stable_duration_abs_error",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0.0,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Metric": "mean_abs_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0.0,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Metric": "p90_abs_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": 0.0,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_midlat_europe_highlat_north",
+      "Metric": "pairwise_delta_count_match",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": true,
+      "Rule multi-agent error": true,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Metric": "mean_abs_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Metric": "p90_abs_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "compare_three_regions",
+      "Metric": "pairwise_delta_count_match",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": true,
+      "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Metric": "required_artifacts_present",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": true,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Metric": "report_grounded_in_artifacts",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": true,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Metric": "report_high_tec_interval_count_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    },
+    {
+      "Preset": "report_midlat_europe",
+      "Metric": "report_stable_interval_count_error_avg",
+      "Gold / expected": "0 error / true match",
+      "Qwen single-agent error": null,
+      "Rule multi-agent error": 0.0,
+      "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+    }
+  ],
+  "dataset_table": [
+    {
+      "Dataset path": "data\\processed\\tec_regions_2024_01_01_to_2024_04_01_hourly.parquet",
+      "Rows": 2184,
+      "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+      "Start": "2024-01-01 00:00:00",
+      "End": "2024-03-31 23:00:00",
+      "Frequency": "0 days 01:00:00"
+    },
+    {
+      "Dataset path": "data\\processed\\tec_regions_2024_03_hourly.parquet",
+      "Rows": 745,
+      "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+      "Start": "2024-03-01 00:00:00",
+      "End": "2024-04-01 00:00:00",
+      "Frequency": "0 days 01:00:00"
+    },
+    {
+      "Dataset path": "data\\processed\\tec_regions_2024_03_hourly.csv",
+      "Rows": 745,
+      "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+      "Start": "2024-03-01 00:00:00",
+      "End": "2024-04-01 00:00:00",
+      "Frequency": "0 days 01:00:00"
+    }
+  ],
+  "tools_table": [
+    {
+      "Tool": "tec_compare_regions",
+      "Назначение": "Compare aggregated TEC statistics across two or more predefined regions for the same time interval.",
+      "Основные аргументы": "dataset_ref, region_ids, start, end, freq, metrics",
+      "Возвращаемые artifacts": "dataset_ref, start, end, stats",
+      "Используется в сценариях": "legacy/aggregate compare; not expected primitive workflow"
+    },
+    {
+      "Tool": "tec_compare_stats",
+      "Назначение": "Compare two or more previously computed TEC statistics handles and return structured pairwise metric deltas.",
+      "Основные аргументы": "stats_ids, reference_stats_id, metrics",
+      "Возвращаемые artifacts": "comparison_id, stats_ids, reference_stats_id, regions, items, pairwise_deltas",
+      "Используется в сценариях": "compare_regions"
+    },
+    {
+      "Tool": "tec_compute_high_threshold",
+      "Назначение": "Compute a high-TEC threshold for a stored time series. Usually use method='quantile' and q=0.9 unless the user explicitly asks for another threshold.",
+      "Основные аргументы": "series_id, method, q, value",
+      "Возвращаемые artifacts": "threshold_id, series_id, method, q, value, n_points_used",
+      "Используется в сценариях": "high_tec, report"
+    },
+    {
+      "Tool": "tec_compute_series_stats",
+      "Назначение": "Compute selected deterministic statistics for a previously loaded TEC time series and return a stats_id handle.",
+      "Основные аргументы": "series_id, metrics",
+      "Возвращаемые artifacts": "stats_id, series_id, region_id, n_points, finite_points, metrics",
+      "Используется в сценариях": "compare_regions, report"
+    },
+    {
+      "Tool": "tec_compute_stability_thresholds",
+      "Назначение": "Compute rolling-window thresholds for stable interval detection using quantiles of rolling TEC variability.",
+      "Основные аргументы": "series_id, window_minutes, method, q_delta, q_std",
+      "Возвращаемые artifacts": "threshold_id, series_id, method, window_minutes, q_delta, q_std, max_delta_threshold, rolling_std_threshold, estimated_step_minutes, window_points, n_points, max_abs_delta, max_std, n_windows_used",
+      "Используется в сценариях": "stable_intervals, report"
+    },
+    {
+      "Tool": "tec_detect_high_intervals",
+      "Назначение": "Detect intervals where TEC is greater than or equal to a previously computed high-TEC threshold.",
+      "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes",
+      "Возвращаемые artifacts": "series_id, threshold_id, threshold_value, n_intervals, intervals",
+      "Используется в сценариях": "high_tec, report"
+    },
+    {
+      "Tool": "tec_detect_stable_intervals",
+      "Назначение": "Detect stable TEC intervals using previously computed stability thresholds.",
+      "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes",
+      "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals",
+      "Используется в сценариях": "stable_intervals, report"
+    },
+    {
+      "Tool": "tec_find_stable_intervals_direct",
+      "Назначение": "Detect stable TEC intervals using explicit variability limits without a separate threshold computation step.",
+      "Основные аргументы": "series_id, window_minutes, max_delta, max_abs_delta, max_std, min_duration_minutes, merge_gap_minutes",
+      "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals",
+      "Используется в сценариях": "direct stable helper; not expected five-task sequence"
+    },
+    {
+      "Tool": "tec_get_timeseries",
+      "Назначение": "Load a TEC time series for one predefined geographic region and a half-open time interval [start, end).",
+      "Основные аргументы": "dataset_ref, region_id, start, end, freq",
+      "Возвращаемые artifacts": "series_id, metadata",
+      "Используется в сценариях": "all scenarios"
+    },
+    {
+      "Tool": "tec_series_profile",
+      "Назначение": "Return descriptive statistics for a previously loaded TEC time series.",
+      "Основные аргументы": "series_id",
+      "Возвращаемые artifacts": "series_id, n_points, finite_points, start, end, min_value, max_value, mean_value, median_value, std_value, q10, q25, q75, q90",
+      "Используется в сценариях": "optional profiling; sometimes attempted by LLM roles"
+    }
+  ],
+  "five_task_table": [
+    {
+      "Preset ID": "hightec_midlat_europe",
+      "Task type": "high_tec",
+      "Natural-language query": "Find high TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using q=0.90 threshold.",
+      "Regions": "midlat_europe",
+      "Period": "[2024-03-01, 2024-04-01)",
+      "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals"
+    },
+    {
+      "Preset ID": "stable_midlat_europe",
+      "Task type": "stable_intervals",
+      "Natural-language query": "Find stable TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using the configured stability parameters.",
+      "Regions": "midlat_europe",
+      "Period": "[2024-03-01, 2024-04-01)",
+      "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"
+    },
+    {
+      "Preset ID": "compare_midlat_europe_highlat_north",
+      "Task type": "compare_regions",
+      "Natural-language query": "Compare TEC statistics for midlat_europe and highlat_north from 2024-03-01 to 2024-04-01.",
+      "Regions": "midlat_europe, highlat_north",
+      "Period": "[2024-03-01, 2024-04-01)",
+      "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"
+    },
+    {
+      "Preset ID": "compare_three_regions",
+      "Task type": "compare_regions",
+      "Natural-language query": "Compare TEC statistics for equatorial_atlantic, midlat_europe, and highlat_north from 2024-03-01 to 2024-04-01.",
+      "Regions": "equatorial_atlantic, midlat_europe, highlat_north",
+      "Period": "[2024-03-01, 2024-04-01)",
+      "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"
+    },
+    {
+      "Preset ID": "report_midlat_europe",
+      "Task type": "report",
+      "Natural-language query": "Build a concise TEC analysis report for midlat_europe from 2024-03-01 to 2024-04-01. Include basic statistics, high TEC intervals, stable intervals, and a short interpretation based only on computed artifacts.",
+      "Regions": "midlat_europe",
+      "Period": "[2024-03-01, 2024-04-01)",
+      "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"
+    }
+  ],
+  "outputs_inventory": [
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_compare_midlat_europe_highlat_north_five_task.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 59280
+    },
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_compare_three_regions_five_task.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 83505
+    },
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_five_task_batch.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 692237
+    },
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_hightec_midlat_europe_five_task.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 56706
+    },
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_report_midlat_europe_five_task.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 231026
+    },
+    {
+      "File": "outputs\\metrics\\multi_agent_rule_based_stable_midlat_europe_five_task.json",
+      "Kind": "Rule-based multi-agent",
+      "Size bytes": 196430
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_batch_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 263742
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_compare_midlat_europe_highlat_north_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 36605
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_compare_three_regions_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 40875
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_hightec_midlat_europe_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 29430
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_report_midlat_europe_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 64037
+    },
+    {
+      "File": "outputs\\metrics\\qwen_multi_agent_stable_midlat_europe_colab.json",
+      "Kind": "Qwen full LLM multi-agent",
+      "Size bytes": 69565
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_batch_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 665166
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_compare_midlat_europe_highlat_north_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 47403
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_compare_three_regions_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 41065
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_hightec_midlat_europe_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 55117
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_report_midlat_europe_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 230740
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_smoke_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 60512
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v2.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 10774
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v3.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 52762
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v4_date_checked.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 59383
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v5_date_checked.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 47481
+    },
+    {
+      "File": "outputs\\metrics\\qwen_single_agent_stable_midlat_europe_colab.json",
+      "Kind": "Qwen single-agent",
+      "Size bytes": 227563
+    },
+    {
+      "File": "outputs\\metrics\\real_multi_agent_rule_based_march_2024.json",
+      "Kind": "Real deterministic multi-agent experiment",
+      "Size bytes": 1922906
+    },
+    {
+      "File": "outputs\\metrics\\real_single_agent_rule_based_march_2024.json",
+      "Kind": "Real deterministic single-agent experiment",
+      "Size bytes": 1793641
+    },
+    {
+      "File": "outputs\\metrics\\smoke_single_agent_rule_based.json",
+      "Kind": "Smoke output",
+      "Size bytes": 127427
+    }
+  ],
+  "assets": [
+    "architecture_summary_table.json",
+    "per_task_comparison_table.json",
+    "tool_sequence_comparison_table.json",
+    "role_protocol_errors_table.json",
+    "numeric_metrics_comparison_table.json",
+    "dataset_table.json",
+    "tools_table.json",
+    "five_task_table.json",
+    "outputs_inventory_table.json"
+  ]
+}

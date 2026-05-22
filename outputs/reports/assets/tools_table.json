@@ -1,0 +1,72 @@
+[
+  {
+    "Tool": "tec_compare_regions",
+    "Назначение": "Compare aggregated TEC statistics across two or more predefined regions for the same time interval.",
+    "Основные аргументы": "dataset_ref, region_ids, start, end, freq, metrics",
+    "Возвращаемые artifacts": "dataset_ref, start, end, stats",
+    "Используется в сценариях": "legacy/aggregate compare; not expected primitive workflow"
+  },
+  {
+    "Tool": "tec_compare_stats",
+    "Назначение": "Compare two or more previously computed TEC statistics handles and return structured pairwise metric deltas.",
+    "Основные аргументы": "stats_ids, reference_stats_id, metrics",
+    "Возвращаемые artifacts": "comparison_id, stats_ids, reference_stats_id, regions, items, pairwise_deltas",
+    "Используется в сценариях": "compare_regions"
+  },
+  {
+    "Tool": "tec_compute_high_threshold",
+    "Назначение": "Compute a high-TEC threshold for a stored time series. Usually use method='quantile' and q=0.9 unless the user explicitly asks for another threshold.",
+    "Основные аргументы": "series_id, method, q, value",
+    "Возвращаемые artifacts": "threshold_id, series_id, method, q, value, n_points_used",
+    "Используется в сценариях": "high_tec, report"
+  },
+  {
+    "Tool": "tec_compute_series_stats",
+    "Назначение": "Compute selected deterministic statistics for a previously loaded TEC time series and return a stats_id handle.",
+    "Основные аргументы": "series_id, metrics",
+    "Возвращаемые artifacts": "stats_id, series_id, region_id, n_points, finite_points, metrics",
+    "Используется в сценариях": "compare_regions, report"
+  },
+  {
+    "Tool": "tec_compute_stability_thresholds",
+    "Назначение": "Compute rolling-window thresholds for stable interval detection using quantiles of rolling TEC variability.",
+    "Основные аргументы": "series_id, window_minutes, method, q_delta, q_std",
+    "Возвращаемые artifacts": "threshold_id, series_id, method, window_minutes, q_delta, q_std, max_delta_threshold, rolling_std_threshold, estimated_step_minutes, window_points, n_points, max_abs_delta, max_std, n_windows_used",
+    "Используется в сценариях": "stable_intervals, report"
+  },
+  {
+    "Tool": "tec_detect_high_intervals",
+    "Назначение": "Detect intervals where TEC is greater than or equal to a previously computed high-TEC threshold.",
+    "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes",
+    "Возвращаемые artifacts": "series_id, threshold_id, threshold_value, n_intervals, intervals",
+    "Используется в сценариях": "high_tec, report"
+  },
+  {
+    "Tool": "tec_detect_stable_intervals",
+    "Назначение": "Detect stable TEC intervals using previously computed stability thresholds.",
+    "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes",
+    "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals",
+    "Используется в сценариях": "stable_intervals, report"
+  },
+  {
+    "Tool": "tec_find_stable_intervals_direct",
+    "Назначение": "Detect stable TEC intervals using explicit variability limits without a separate threshold computation step.",
+    "Основные аргументы": "series_id, window_minutes, max_delta, max_abs_delta, max_std, min_duration_minutes, merge_gap_minutes",
+    "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals",
+    "Используется в сценариях": "direct stable helper; not expected five-task sequence"
+  },
+  {
+    "Tool": "tec_get_timeseries",
+    "Назначение": "Load a TEC time series for one predefined geographic region and a half-open time interval [start, end).",
+    "Основные аргументы": "dataset_ref, region_id, start, end, freq",
+    "Возвращаемые artifacts": "series_id, metadata",
+    "Используется в сценариях": "all scenarios"
+  },
+  {
+    "Tool": "tec_series_profile",
+    "Назначение": "Return descriptive statistics for a previously loaded TEC time series.",
+    "Основные аргументы": "series_id",
+    "Возвращаемые artifacts": "series_id, n_points, finite_points, start, end, min_value, max_value, mean_value, median_value, std_value, q10, q25, q75, q90",
+    "Используется в сценариях": "optional profiling; sometimes attempted by LLM roles"
+  }
+]

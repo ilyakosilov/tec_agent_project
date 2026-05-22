@@ -1,0 +1,132 @@
+[
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_compare_midlat_europe_highlat_north_five_task.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 59280
+  },
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_compare_three_regions_five_task.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 83505
+  },
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_five_task_batch.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 692237
+  },
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_hightec_midlat_europe_five_task.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 56706
+  },
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_report_midlat_europe_five_task.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 231026
+  },
+  {
+    "File": "outputs\\metrics\\multi_agent_rule_based_stable_midlat_europe_five_task.json",
+    "Kind": "Rule-based multi-agent",
+    "Size bytes": 196430
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_batch_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 263742
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_compare_midlat_europe_highlat_north_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 36605
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_compare_three_regions_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 40875
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_hightec_midlat_europe_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 29430
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_report_midlat_europe_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 64037
+  },
+  {
+    "File": "outputs\\metrics\\qwen_multi_agent_stable_midlat_europe_colab.json",
+    "Kind": "Qwen full LLM multi-agent",
+    "Size bytes": 69565
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_batch_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 665166
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_compare_midlat_europe_highlat_north_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 47403
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_compare_three_regions_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 41065
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_hightec_midlat_europe_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 55117
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_report_midlat_europe_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 230740
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_smoke_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 60512
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v2.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 10774
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v3.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 52762
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v4_date_checked.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 59383
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v5_date_checked.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 47481
+  },
+  {
+    "File": "outputs\\metrics\\qwen_single_agent_stable_midlat_europe_colab.json",
+    "Kind": "Qwen single-agent",
+    "Size bytes": 227563
+  },
+  {
+    "File": "outputs\\metrics\\real_multi_agent_rule_based_march_2024.json",
+    "Kind": "Real deterministic multi-agent experiment",
+    "Size bytes": 1922906
+  },
+  {
+    "File": "outputs\\metrics\\real_single_agent_rule_based_march_2024.json",
+    "Kind": "Real deterministic single-agent experiment",
+    "Size bytes": 1793641
+  },
+  {
+    "File": "outputs\\metrics\\smoke_single_agent_rule_based.json",
+    "Kind": "Smoke output",
+    "Size bytes": 127427
+  }
+]

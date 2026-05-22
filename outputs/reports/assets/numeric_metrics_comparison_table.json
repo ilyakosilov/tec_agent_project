@@ -1,0 +1,122 @@
+[
+  {
+    "Preset": "hightec_midlat_europe",
+    "Metric": "threshold_abs_error",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0.0,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "hightec_midlat_europe",
+    "Metric": "interval_count_error",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0,
+    "Rule multi-agent error": 0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "hightec_midlat_europe",
+    "Metric": "global_peak_abs_error",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0.0,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "stable_midlat_europe",
+    "Metric": "stable_interval_count_error",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0,
+    "Rule multi-agent error": 0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "stable_midlat_europe",
+    "Metric": "top_stable_duration_abs_error",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0.0,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Metric": "mean_abs_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0.0,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Metric": "p90_abs_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": 0.0,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_midlat_europe_highlat_north",
+    "Metric": "pairwise_delta_count_match",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": true,
+    "Rule multi-agent error": true,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Metric": "mean_abs_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Metric": "p90_abs_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "compare_three_regions",
+    "Metric": "pairwise_delta_count_match",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": true,
+    "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Metric": "required_artifacts_present",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": true,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Metric": "report_grounded_in_artifacts",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": true,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Metric": "report_high_tec_interval_count_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  },
+  {
+    "Preset": "report_midlat_europe",
+    "Metric": "report_stable_interval_count_error_avg",
+    "Gold / expected": "0 error / true match",
+    "Qwen single-agent error": null,
+    "Rule multi-agent error": 0.0,
+    "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."
+  }
+]

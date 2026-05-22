@@ -1,0 +1,26 @@
+[
+  {
+    "Dataset path": "data\\processed\\tec_regions_2024_01_01_to_2024_04_01_hourly.parquet",
+    "Rows": 2184,
+    "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+    "Start": "2024-01-01 00:00:00",
+    "End": "2024-03-31 23:00:00",
+    "Frequency": "0 days 01:00:00"
+  },
+  {
+    "Dataset path": "data\\processed\\tec_regions_2024_03_hourly.parquet",
+    "Rows": 745,
+    "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+    "Start": "2024-03-01 00:00:00",
+    "End": "2024-04-01 00:00:00",
+    "Frequency": "0 days 01:00:00"
+  },
+  {
+    "Dataset path": "data\\processed\\tec_regions_2024_03_hourly.csv",
+    "Rows": 745,
+    "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south",
+    "Start": "2024-03-01 00:00:00",
+    "End": "2024-04-01 00:00:00",
+    "Frequency": "0 days 01:00:00"
+  }
+]
