@@ -445,7 +445,11 @@ class RuleBasedOrchestrator:
 
         include: list[str] = []
 
-        if "basic_stats" in lower_query or "basic stats" in lower_query:
+        if (
+            "basic_stats" in lower_query
+            or "basic stats" in lower_query
+            or "basic statistics" in lower_query
+        ):
             include.append("basic_stats")
         if "high_tec" in lower_query or "high tec" in lower_query:
             include.append("high_tec")
