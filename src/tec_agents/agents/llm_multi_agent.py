@@ -56,6 +56,8 @@ ROLE_TOOL_ALLOWLIST: dict[str, set[str]] = {
 
 AGENT_RESPONSE_STATUS = {
     "ok",
+    "done",
+    "cannot_complete",
     "missing_artifacts",
     "invalid_input",
     "tool_error",
@@ -89,6 +91,7 @@ class LLMRoleOutput:
     invalid_json_count: int = 0
     unknown_format_count: int = 0
     invalid_tool_name_count: int = 0
+    invalid_role_protocol_count: int = 0
     forbidden_tool_call_count: int = 0
     repeated_tool_call_count: int = 0
     repair_attempt_count: int = 0
@@ -117,6 +120,7 @@ class LLMMultiAgentResult:
     unknown_format_count: int
     invalid_role_action_count: int
     invalid_tool_name_count: int
+    invalid_role_protocol_count: int
     forbidden_tool_call_count: int
     repeated_tool_call_count: int
     stalled_loop_detected: bool
@@ -304,7 +308,8 @@ class LLMRoleAgent:
                     {
                         "role": "user",
                         "content": build_role_output_repair_message(
-                            parsed.get("error_message") or "Unknown format."
+                            parsed.get("error_message") or "Unknown format.",
+                            self.role,
                         ),
                     }
                 )
@@ -318,6 +323,28 @@ class LLMRoleAgent:
                 role_step["tool_name"] = tool_name
                 role_step["arguments"] = arguments
 
+                protocol_error = validate_tool_call_protocol(
+                    role=self.role,
+                    tool_name=tool_name,
+                )
+                if protocol_error is not None:
+                    output.invalid_role_protocol_count += 1
+                    output.forbidden_tool_call_count += 1
+                    role_step["tool_status"] = "protocol_violation"
+                    role_step["protocol_error"] = protocol_error
+                    output.role_steps.append(role_step)
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": build_protocol_violation_message(
+                                role=self.role,
+                                tool_name=tool_name,
+                                error=protocol_error,
+                            ),
+                        }
+                    )
+                    continue
+
                 if tool_name not in self.client.list_tool_names():
                     output.invalid_tool_name_count += 1
                     role_step["tool_status"] = "invalid_tool_name"
@@ -325,9 +352,9 @@ class LLMRoleAgent:
                     messages.append(
                         {
                             "role": "user",
-                            "content": (
-                                f"Tool {tool_name!r} is not available. Return a "
-                                "valid role output using only the allowed tools."
+                            "content": build_invalid_tool_name_message(
+                                self.role,
+                                tool_name,
                             ),
                         }
                     )
@@ -531,6 +558,7 @@ class LLMFullMultiAgent:
             "unknown_format_count": 0,
             "invalid_role_action_count": 0,
             "invalid_tool_name_count": 0,
+            "invalid_role_protocol_count": 0,
             "forbidden_tool_call_count": 0,
             "repeated_tool_call_count": 0,
             "repair_attempt_count": 0,
@@ -577,8 +605,10 @@ class LLMFullMultiAgent:
                     action="llm_decide_role",
                     status="ok",
                     details={
-                        "worker": "role_based_workflow",
-                        "selected_worker": "role_based_workflow",
+                        "worker": "full_llm_multi_agent",
+                        "selected_worker": "full_llm_multi_agent",
+                        "workflow": "full_llm_role_workflow",
+                        "architecture": "qwen_multi_agent_full_llm",
                         "llm_driven": True,
                         "decisions": orchestrator_decisions,
                         "agent_response": {
@@ -663,7 +693,7 @@ class LLMFullMultiAgent:
                             "artifacts": role_output.artifacts,
                             "message": role_output.message,
                             "can_continue": role_output.status
-                            in {"ok", "partial", "final"},
+                            in {"ok", "done", "partial", "final", "cannot_complete"},
                             "requires_retry": role_output.status
                             in {"tool_error", "invalid_input"},
                             "missing_artifacts": [],
@@ -673,13 +703,20 @@ class LLMFullMultiAgent:
                     },
                     decision=(
                         "continue"
-                        if role_output.status in {"ok", "partial", "final"}
+                        if role_output.status
+                        in {"ok", "done", "partial", "final", "cannot_complete"}
                         else "fail"
                     ),
                 )
             )
 
-            if role_output.status not in {"ok", "partial", "final"}:
+            if role_output.status not in {
+                "ok",
+                "done",
+                "partial",
+                "final",
+                "cannot_complete",
+            }:
                 counters["recovery_failure_count"] += 1
                 return self._result(
                     user_query=user_query,
@@ -751,6 +788,7 @@ class LLMFullMultiAgent:
             unknown_format_count=counters["unknown_format_count"],
             invalid_role_action_count=counters["invalid_role_action_count"],
             invalid_tool_name_count=counters["invalid_tool_name_count"],
+            invalid_role_protocol_count=counters["invalid_role_protocol_count"],
             forbidden_tool_call_count=counters["forbidden_tool_call_count"],
             repeated_tool_call_count=counters["repeated_tool_call_count"],
             stalled_loop_detected=stalled_loop_detected,
@@ -771,15 +809,27 @@ def build_orchestrator_prompt() -> str:
 {BASE_DOMAIN_CONTEXT}
 
 LLM OrchestratorAgent:
-- You coordinate LLM role agents and do not call tools.
+- You coordinate LLM role agents through role_action blocks.
+- You never call tools directly.
 - You do not compute TEC values and do not write the final answer yourself.
-- Available roles:
+- Existing roles:
   data_agent: retrieves time-series data artifacts.
   math_agent: computes numerical artifacts from available handles.
   analysis_agent: writes structured findings from artifacts.
   report_agent: writes the final answer from artifacts and findings.
 - Use only the user query, role outputs, handoff history, and available
   artifacts shown in the current state.
+- General dependency knowledge:
+  DataAgent produces series/data artifacts.
+  MathAgent uses data artifacts and produces numerical artifacts such as
+  statistics, thresholds, intervals, and comparison outputs.
+  AnalysisAgent uses computed artifacts and produces findings.
+  ReportAgent uses artifacts and findings to produce the final answer.
+- If a role returns done, choose a useful later role from the visible state.
+- If a role returns cannot_complete, choose a role that can add useful input
+  artifacts or finish with failure if progress is impossible.
+- Finish only after report_agent has produced a final answer, or when further
+  progress is impossible.
 - Avoid repeated handoffs that do not add information.
 
 Return exactly one block:
@@ -792,6 +842,7 @@ or:
 {{"action": "finish", "reason": "why the workflow is complete"}}
 </role_action>
 
+Do not output tool_call, role_response, or final_answer.
 No markdown or explanation outside the tags.
 """.strip()
 
@@ -810,6 +861,10 @@ Shared role protocol:
   task requires it, such as separate regions or separate series handles.
 - Do not repeat an identical successful tool call with the same tool name and
   the same arguments. Reuse the returned artifact id when relevant.
+- Do not call role names as tools: orchestrator, data_agent, math_agent,
+  analysis_agent, report_agent.
+- role_response is not a tool. Return a role_response block directly when your
+  role is complete or cannot continue.
 - Do not use tec_build_report.
 - Do not use aggregate tec_compare_regions for primitive comparisons.
 """.strip()
@@ -817,12 +872,19 @@ Shared role protocol:
     if role == "data_agent":
         details = """
 LLM DataAgent:
-- Retrieve data artifacts only.
+- Retrieve TEC time-series data artifacts for the requested region or regions
+  and period.
 - Allowed tools:
   tec_get_timeseries
-  tec_series_profile
+  tec_series_profile only when data profiling is explicitly useful.
 - Do not compute statistics, thresholds, intervals, comparisons, analysis, or
   report text.
+- Do not call math_agent, analysis_agent, or report_agent.
+- If the needed series_id artifacts are already visible, return role_response.
+- After successfully loading the needed time series artifacts, stop tool use
+  and return role_response to the orchestrator.
+- For most tasks, tec_get_timeseries is enough for the data part; do not keep
+  calling tec_series_profile repeatedly.
 - Use dataset_ref="default" unless the user or state specifies another value.
 - Dates use [start, end), with end exclusive.
 """.strip()
@@ -839,6 +901,15 @@ LLM MathAgent:
   tec_detect_stable_intervals
 - Do not load data.
 - Do not write the final user-facing answer.
+- Do not call data_agent, analysis_agent, or report_agent.
+- If no suitable series_id is visible, return role_response with
+  status="cannot_complete".
+- compare_regions is not a tool. tec_compare_regions is not available.
+- For comparison work, use computed stats artifacts with tec_compare_stats. If
+  stats artifacts are not visible but series_id artifacts are visible, compute
+  stats from the series handles first.
+- After completing the numerical part you can do from visible artifacts, return
+  role_response to the orchestrator.
 """.strip()
     elif role == "analysis_agent":
         details = """
@@ -846,6 +917,9 @@ LLM AnalysisAgent:
 - No tools are allowed.
 - Use available data and math artifacts to produce concise structured findings.
 - Do not write the final user-facing answer.
+- If computed artifacts are not visible, return role_response with
+  status="cannot_complete".
+- Do not call compare_regions, tec_compare_stats, report_agent, or any tool.
 """.strip()
     elif role == "report_agent":
         details = """
@@ -854,24 +928,49 @@ LLM ReportAgent:
 - Produce the final user-facing answer using only available artifacts and
   findings.
 - If limitations remain, state them plainly without fabricating numbers.
+- If artifacts or findings are insufficient, return role_response with
+  status="cannot_complete".
+- Do not call tools, roles, role_action, or role_response as a tool.
 """.strip()
     else:
         raise ValueError(f"Unknown role: {role!r}")
 
-    protocol = """
-Return exactly one of:
+    if role in {"data_agent", "math_agent"}:
+        protocol = """
+Return exactly one of these blocks:
 <tool_call>
 {"name": "tool_name", "arguments": {...}}
 </tool_call>
 
 <role_response>
-{"status": "ok", "message": "brief summary", "artifacts": {}, "findings": []}
+{"status": "done", "message": "brief summary", "artifacts": {}, "findings": []}
 </role_response>
 
+Do not output role_action or final_answer.
+No markdown or explanation outside the tags.
+""".strip()
+    elif role == "analysis_agent":
+        protocol = """
+Return exactly one block:
+<role_response>
+{"status": "done", "message": "brief findings summary", "artifacts": {}, "findings": []}
+</role_response>
+
+Do not output tool_call, role_action, or final_answer.
+No markdown or explanation outside the tags.
+""".strip()
+    else:
+        protocol = """
+Return exactly one of these blocks:
 <final_answer>
-Final user-facing answer here. Only report_agent may use this.
+{"answer": "final user-facing answer here"}
 </final_answer>
 
+<role_response>
+{"status": "cannot_complete", "message": "brief reason", "artifacts": {}, "findings": []}
+</role_response>
+
+Do not output tool_call or role_action.
 No markdown or explanation outside the tags.
 """.strip()
     return "\n\n".join([common, details, protocol])
@@ -972,12 +1071,27 @@ def validate_role_action(action: dict[str, Any], *, context: dict[str, Any]) -> 
     return "role_action.action must be 'call_role' or 'finish'."
 
 
+def extract_final_answer_text(final_answer: str) -> str:
+    """Return final answer text from either plain text or {"answer": "..."} JSON."""
+
+    text = final_answer.strip()
+    if not text:
+        return ""
+    try:
+        data = json.loads(text)
+    except Exception:
+        return text
+    if isinstance(data, dict) and data.get("answer") is not None:
+        return str(data["answer"])
+    return text
+
+
 def parse_role_output(text: str) -> dict[str, Any]:
     """Parse worker role output."""
 
     final_answer = parse_final_answer(text)
     if final_answer is not None:
-        return {"type": "final_answer", "final_answer": final_answer}
+        return {"type": "final_answer", "final_answer": extract_final_answer_text(final_answer)}
 
     role_response_match = ROLE_RESPONSE_RE.search(text)
     if role_response_match:
@@ -1044,6 +1158,9 @@ def build_role_action_repair_message(error: str) -> str:
     return f"""
 Your previous orchestrator output was invalid: {error}
 
+The orchestrator may output only a role_action block. It must not output
+tool_call, role_response, or final_answer.
+
 Return exactly one valid block:
 <role_action>
 {{"action": "call_role", "role": "data_agent", "message": "brief message"}}
@@ -1057,15 +1174,99 @@ No markdown or explanation outside the tags.
 """.strip()
 
 
-def build_role_output_repair_message(error: str) -> str:
+def build_role_output_repair_message(error: str, role: str | None = None) -> str:
     """Return a worker role repair message."""
+
+    if role in {"data_agent", "math_agent"}:
+        allowed = ", ".join(sorted(ROLE_TOOL_ALLOWLIST[str(role)]))
+        contract = (
+            f"{role} may return either one tool_call using only: {allowed}; "
+            "or one role_response block when its work is complete or blocked. "
+            "It must not return role_action or final_answer."
+        )
+    elif role == "analysis_agent":
+        contract = (
+            "analysis_agent must not call tools. Return exactly one "
+            "role_response block with findings or status cannot_complete."
+        )
+    elif role == "report_agent":
+        contract = (
+            "report_agent must not call tools. Return exactly one final_answer "
+            "block, or one role_response block with status cannot_complete."
+        )
+    else:
+        contract = "Return exactly one valid protocol block for your role."
 
     return f"""
 Your previous role output was invalid: {error}
 
-Return exactly one valid <tool_call>, <role_response>, or <final_answer> block.
+{contract}
 Use valid JSON where JSON is required. No markdown outside the tags.
 """.strip()
+
+
+def validate_tool_call_protocol(role: str, tool_name: str) -> str | None:
+    """Return a role protocol error for impossible tool-call shapes."""
+
+    if tool_name in ROLE_NAMES or tool_name == "orchestrator":
+        return (
+            f"{tool_name!r} is an agent role, not a tool. Workers must not call "
+            "agents as tools."
+        )
+    if tool_name in {"role_response", "role_action", "final_answer"}:
+        return (
+            f"{tool_name!r} is a protocol block name, not a tool. Use the "
+            "corresponding XML-style block directly."
+        )
+    if role == "analysis_agent":
+        return "analysis_agent has no tools and must return role_response only."
+    if role == "report_agent":
+        return "report_agent has no tools and must return final_answer or role_response."
+    return None
+
+
+def build_protocol_violation_message(role: str, tool_name: str, error: str) -> str:
+    """Return a protocol correction without task-plan hints."""
+
+    if role in {"data_agent", "math_agent"}:
+        allowed = sorted(ROLE_TOOL_ALLOWLIST[role])
+        role_contract = (
+            f"{role} may use one allowed tool call ({allowed}) or return "
+            "role_response when its work is complete or blocked."
+        )
+    elif role == "analysis_agent":
+        role_contract = "analysis_agent must return role_response only."
+    elif role == "report_agent":
+        role_contract = (
+            "report_agent must return final_answer, or role_response with "
+            "status cannot_complete."
+        )
+    else:
+        role_contract = "Use the protocol for your role."
+
+    return "\n".join(
+        [
+            f"Protocol violation for {role}: {error}",
+            f"You returned tool name: {tool_name!r}.",
+            "Agents are not tools. Protocol block names are not tools.",
+            role_contract,
+            "Return exactly one valid block for your role. No markdown.",
+        ]
+    )
+
+
+def build_invalid_tool_name_message(role: str, tool_name: str) -> str:
+    """Return an invalid tool-name correction for a role."""
+
+    allowed = sorted(ROLE_TOOL_ALLOWLIST[role])
+    return "\n".join(
+        [
+            f"Tool {tool_name!r} is not available for {role}.",
+            f"Allowed tools for this role: {allowed or '<none>'}.",
+            "Do not invent tool names or aggregate tools.",
+            "Use an allowed tool, or return role_response if your role is complete or blocked.",
+        ]
+    )
 
 
 def build_forbidden_tool_message(role: str, tool_name: str) -> str:
@@ -1076,7 +1277,7 @@ def build_forbidden_tool_message(role: str, tool_name: str) -> str:
         [
             f"Tool {tool_name!r} is forbidden for {role}.",
             f"Allowed tools for this role: {allowed or '<none>'}.",
-            "Return a valid role output using only permitted actions.",
+            "Return a valid block using only the protocol for this role.",
         ]
     )
 
@@ -1097,7 +1298,8 @@ def build_repeated_tool_message(
             "Available artifacts:",
             safe_compact_json(context.get("available_artifacts") or {}),
             "",
-            "Use an artifact id from the successful call when it is relevant, or choose another permitted action.",
+            "This exact tool call already succeeded. Do not repeat it.",
+            "Reuse the returned artifact id when relevant, or return role_response if your role is complete.",
         ]
     )
 
@@ -1427,7 +1629,7 @@ def make_orchestration_step(
         "status": status,
         "missing_artifacts": [],
         "requested_next_action": None,
-        "can_continue": status in {"ok", "partial", "final"},
+        "can_continue": status in {"ok", "done", "partial", "final", "cannot_complete"},
         "requires_retry": status in {"tool_error", "invalid_input"},
         "attempt": 1,
         "max_attempts": 3,
@@ -1461,6 +1663,7 @@ def accumulate_role_diagnostics(
     counters["invalid_json_count"] += role_output.invalid_json_count
     counters["unknown_format_count"] += role_output.unknown_format_count
     counters["invalid_tool_name_count"] += role_output.invalid_tool_name_count
+    counters["invalid_role_protocol_count"] += role_output.invalid_role_protocol_count
     counters["forbidden_tool_call_count"] += role_output.forbidden_tool_call_count
     counters["repeated_tool_call_count"] += role_output.repeated_tool_call_count
     counters["repair_attempt_count"] += role_output.repair_attempt_count
@@ -1496,6 +1699,9 @@ __all__ = [
     "build_orchestrator_prompt",
     "build_role_prompt",
     "clean_multi_agent_output",
+    "extract_final_answer_text",
     "parse_role_action",
     "parse_role_output",
+    "validate_role_action",
+    "validate_tool_call_protocol",
 ]

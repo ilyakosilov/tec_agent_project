@@ -1006,11 +1006,14 @@ def _orchestration_metrics(
         node in {"data_agent", "math_agent", "analysis_agent", "report_agent"}
         for node in nodes
     )
-    expected_worker = (
-        "role_based_workflow"
-        if role_workflow_seen
-        else _expected_worker_for_task_type(task_type)
-    )
+    if selected_worker == "full_llm_multi_agent":
+        expected_worker = "full_llm_multi_agent"
+    else:
+        expected_worker = (
+            "role_based_workflow"
+            if role_workflow_seen
+            else _expected_worker_for_task_type(task_type)
+        )
 
     data_agent_called = "data_agent" in nodes
     math_agent_called = "math_agent" in nodes
@@ -1258,7 +1261,7 @@ def _route_correct(
     if selected_worker == "single_agent":
         return True
 
-    if selected_worker == "role_based_workflow":
+    if selected_worker in {"role_based_workflow", "full_llm_multi_agent"}:
         parsed_task_type = parsed_task.get("task_type") if parsed_task else task_type
         return parsed_task_type == task_type and role_agent_order_match is True
 

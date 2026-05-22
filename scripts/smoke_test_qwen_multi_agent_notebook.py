@@ -12,6 +12,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = PROJECT_ROOT / "notebooks" / "03_qwen_multi_agent_colab.ipynb"
+COMPARE_SCRIPT_PATH = PROJECT_ROOT / "scripts" / "compare_five_task_architectures.py"
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
@@ -66,7 +67,19 @@ def main() -> None:
     assert "GoldRunner result" not in all_text
     assert "deterministic baseline trace" not in all_text
 
-    assert {item["preset_id"] for item in get_five_task_configs()} == EXPECTED_PRESETS
+    configs = get_five_task_configs()
+    assert {item["preset_id"] for item in configs} == EXPECTED_PRESETS
+    assert COMPARE_SCRIPT_PATH.exists()
+
+    from tec_agents.eval.five_task_configs import build_five_task_expected_sequence
+
+    for config in configs:
+        sequence = build_five_task_expected_sequence(config)
+        assert "tec_build_report" not in sequence
+        assert "tec_compare_regions" not in sequence
+        if config["task_type"] == "compare_regions":
+            assert "tec_compare_stats" in sequence
+            assert "tec_compute_series_stats" in sequence
 
     run_lines = [
         line.strip()
