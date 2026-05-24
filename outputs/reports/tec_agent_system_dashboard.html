@@ -1,0 +1,445 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TEC Agent System Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070a12;
+      --bg2: #0b1020;
+      --panel: #101624;
+      --panel2: #111827;
+      --line: rgba(255,255,255,.09);
+      --text: #e5edf8;
+      --muted: #9aa8bd;
+      --blue: #38bdf8;
+      --blue2: #3b82f6;
+      --green: #34d399;
+      --green2: #22c55e;
+      --red: #fb7185;
+      --red2: #ef4444;
+      --orange: #fb923c;
+      --orange2: #f59e0b;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: Inter, Manrope, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      background:
+        linear-gradient(180deg, rgba(56,189,248,.06), transparent 460px),
+        linear-gradient(135deg, #070a12 0%, #0a0f1c 42%, #080b10 100%);
+      color: var(--text);
+      line-height: 1.55;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, #000 0%, transparent 78%);
+    }
+    a { color: var(--blue); text-decoration: none; }
+    .wrap { max-width: 1380px; margin: 0 auto; padding: 0 24px; }
+    .topnav {
+      position: sticky; top: 0; z-index: 20;
+      backdrop-filter: blur(18px);
+      background: rgba(7,10,18,.78);
+      border-bottom: 1px solid var(--line);
+    }
+    .navinner { display: flex; gap: 10px; overflow-x: auto; padding: 12px 24px; max-width: 1380px; margin: 0 auto; }
+    .navinner a {
+      white-space: nowrap; color: #cbd5e1; font-size: 13px; padding: 8px 10px;
+      border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.03);
+    }
+    .hero { padding: 76px 0 30px; position: relative; }
+    .eyebrow { color: var(--blue); font-family: var(--mono); font-size: 13px; letter-spacing: 0; }
+    h1 { font-size: clamp(48px, 7vw, 92px); line-height: .93; margin: 14px 0; letter-spacing: 0; }
+    .gradient-title {
+      background: linear-gradient(90deg, #fff, #bae6fd 45%, #67e8f9 100%);
+      -webkit-background-clip: text; background-clip: text; color: transparent;
+    }
+    .lede { color: #cbd5e1; max-width: 960px; font-size: 19px; }
+    .grid { display: grid; gap: 16px; }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.02));
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.28);
+      padding: 18px;
+      position: relative;
+      overflow: hidden;
+    }
+    .card::before {
+      content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+      background: var(--accent, var(--blue)); opacity: .85;
+    }
+    .metric-card { min-height: 178px; display: flex; flex-direction: column; justify-content: space-between; }
+    .metric-card h3 { margin: 4px 0 12px; font-size: 20px; }
+    .metric-list { display: grid; gap: 8px; }
+    .metric-row { display: flex; justify-content: space-between; gap: 14px; color: var(--muted); font-size: 14px; }
+    .metric-row strong { color: var(--text); font-family: var(--mono); }
+    section { padding: 34px 0; }
+    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
+    .section-kicker { color: var(--accent, var(--blue)); font-family: var(--mono); font-size: 12px; text-transform: uppercase; }
+    h2 { margin: 4px 0 0; font-size: clamp(28px, 3vw, 42px); letter-spacing: 0; }
+    h3 { letter-spacing: 0; }
+    .subtle { color: var(--muted); }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 8px;
+      border: 1px solid var(--line); background: rgba(255,255,255,.04); color: #dbeafe;
+      font-family: var(--mono); font-size: 12px; white-space: nowrap;
+    }
+    .chip.good { color: #bbf7d0; border-color: rgba(52,211,153,.35); background: rgba(16,185,129,.10); }
+    .chip.bad { color: #fecdd3; border-color: rgba(251,113,133,.38); background: rgba(244,63,94,.10); }
+    .chip.warn { color: #fed7aa; border-color: rgba(251,146,60,.40); background: rgba(251,146,60,.10); }
+    .chart-card { min-height: 292px; }
+    .bars { display: grid; gap: 16px; margin-top: 16px; }
+    .bar-row { display: grid; grid-template-columns: 178px 1fr 54px; align-items: center; gap: 12px; }
+    .bar-label { color: #cbd5e1; font-size: 13px; }
+    .bar-track { height: 16px; background: rgba(255,255,255,.06); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 8px; background: var(--bar); width: var(--w); box-shadow: 0 0 24px color-mix(in srgb, var(--bar), transparent 50%); }
+    .bar-val { font-family: var(--mono); font-size: 13px; color: #e5e7eb; text-align: right; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: rgba(15,23,42,.6); }
+    table { width: 100%; border-collapse: collapse; min-width: 860px; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid rgba(255,255,255,.06); vertical-align: top; font-size: 13px; }
+    th { position: sticky; top: 0; background: #111827; color: #e2e8f0; text-align: left; z-index: 2; }
+    tr:nth-child(even) td { background: rgba(255,255,255,.025); }
+    td code, .mono { font-family: var(--mono); color: #dbeafe; }
+    details {
+      border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.03);
+      padding: 12px 14px;
+    }
+    details + details { margin-top: 10px; }
+    summary { cursor: pointer; color: #e2e8f0; font-weight: 700; }
+    .flow { display: flex; gap: 10px; align-items: center; overflow-x: auto; padding: 10px 0; }
+    .flow-node { min-width: 128px; text-align: center; padding: 12px; border-radius: 8px; border: 1px solid var(--line); background: rgba(56,189,248,.08); }
+    .arrow { color: var(--muted); font-family: var(--mono); }
+    .tool-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .tool-card h3 { font-family: var(--mono); font-size: 15px; color: #e0f2fe; }
+    .searchbar { width: 100%; padding: 13px 14px; color: var(--text); border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,.22); }
+    .filterbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 18px; }
+    .filter-btn {
+      border: 1px solid var(--line); border-radius: 8px; padding: 8px 11px;
+      background: rgba(255,255,255,.045); color: var(--muted); cursor: pointer;
+      font: 12px var(--mono); text-transform: uppercase;
+    }
+    .filter-btn.active { color: var(--text); border-color: var(--accent, var(--blue)); box-shadow: 0 0 18px rgba(56,189,248,.14); }
+    .sequence { display: flex; gap: 7px; align-items: center; overflow-x: auto; padding-bottom: 4px; }
+    .codeblock {
+      font-family: var(--mono); white-space: pre-wrap; background: #050814; color: #dbeafe;
+      border: 1px solid rgba(56,189,248,.2); border-radius: 8px; padding: 14px; overflow-x: auto;
+    }
+    .callout { border-left: 3px solid var(--accent, var(--blue)); background: rgba(255,255,255,.035); padding: 12px 14px; border-radius: 8px; }
+    .matrix { display: grid; grid-template-columns: 220px repeat(3, 1fr); gap: 8px; }
+    .matrix > div { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.035); }
+    .success-matrix { display: grid; gap: 8px; }
+    .success-row { display: grid; grid-template-columns: minmax(220px, 1.4fr) repeat(3, minmax(130px, 1fr)); gap: 8px; }
+    .success-row > div { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: rgba(255,255,255,.035); }
+    .success-head > div { color: var(--muted); font: 12px var(--mono); text-transform: uppercase; }
+    footer { padding: 44px 0 70px; color: var(--muted); }
+    @media (max-width: 980px) {
+      .three, .two, .tool-grid { grid-template-columns: 1fr; }
+      .section-head { display: block; }
+      .bar-row { grid-template-columns: 1fr; }
+      .matrix { grid-template-columns: 1fr; }
+      .hero { padding-top: 44px; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="topnav">
+    <div class="navinner">
+      <a href="#overview">Overview</a><a href="#architecture">Architecture</a><a href="#data">Data</a><a href="#tools">Tools</a><a href="#tasks">Tasks</a><a href="#agents">Agents</a><a href="#protocol">Protocol</a><a href="#metrics">Metrics</a><a href="#results">Results</a><a href="#failures">Failures</a><a href="#appendix">Appendix</a>
+    </div>
+  </nav>
+
+  <main class="wrap">
+    <section class="hero" id="overview">
+      <div class="eyebrow">TEC AGENT SYSTEM / TECHNICAL EXPERIMENT DASHBOARD</div>
+      <h1><span class="gradient-title">TEC Agent System</span></h1>
+      <p class="lede">LLM tool-calling and multi-agent orchestration for ionospheric TEC analysis. The experiment compares Qwen single-agent, deterministic rule-based multi-agent baseline, and Qwen full LLM multi-agent on identical data, tools, tasks, and GoldRunner metrics.</p>
+      <div class="grid three" id="heroCards"></div>
+    </section>
+
+    <section>
+      <div class="grid four-summary two">
+        <div class="card" style="--accent:var(--blue)"><span class="chip">focus</span><h3>Orchestration, not generic model quality</h3><p class="subtle">The project tests whether agents can use the same deterministic tools correctly under shared evaluation.</p></div>
+        <div class="card" style="--accent:var(--green)"><span class="chip good">oracle</span><h3>GoldRunner is numerical reference</h3><p class="subtle">GoldRunner computes correct structured artifacts after the agent run and is never prompt-visible.</p></div>
+        <div class="card" style="--accent:var(--green)"><span class="chip good">control</span><h3>Rule baseline passes 5/5</h3><p class="subtle">The scripted role workflow validates data, tools, metrics, and artifact flow.</p></div>
+        <div class="card" style="--accent:var(--red)"><span class="chip bad">failure mode</span><h3>Full LLM multi-agent fails on protocol</h3><p class="subtle">The current full LLM implementation stalls on role protocol and handoff discipline, not TEC mathematics.</p></div>
+      </div>
+    </section>
+
+    <section id="architecture" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Architecture comparison</div><h2>Three architectures, one evaluation surface</h2></div><p class="subtle">Rates are read from prepared report assets.</p></div>
+      <div class="grid two">
+        <div class="card chart-card"><h3>Success rate</h3><div class="bars" data-chart="success_rate"></div></div>
+        <div class="card chart-card"><h3>Overall OK rate</h3><div class="bars" data-chart="overall_ok_rate"></div></div>
+        <div class="card chart-card"><h3>Stalled loop rate</h3><div class="bars" data-chart="stalled_loop_rate"></div></div>
+        <div class="card chart-card"><h3>Tool sequence match rate</h3><div class="bars" data-chart="tool_sequence_match_rate"></div></div>
+      </div>
+      <div class="card chart-card" style="margin-top:18px"><h3>Per-task success matrix</h3><div id="perTaskSuccessMatrix" class="success-matrix"></div></div>
+      <h3>Architecture summary table</h3>
+      <div class="table-wrap" id="architectureTable"></div>
+    </section>
+
+    <section id="project-map" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Project map</div><h2>Repository structure</h2></div></div>
+      <div class="grid two">
+        <details open><summary>notebooks</summary><p>Dataset building and Qwen experiment notebooks: <code>01_build_tec_dataset</code>, <code>02_qwen_single_agent_colab</code>, <code>03_qwen_multi_agent_colab</code>.</p></details>
+        <details><summary>src/tec_agents/agents</summary><p>Deterministic and LLM single/multi-agent orchestration modules.</p></details>
+        <details><summary>src/tec_agents/tools</summary><p>TEC primitive tools, Pydantic schemas, registry and executor.</p></details>
+        <details><summary>src/tec_agents/mcp</summary><p>Local in-process MCP-like server/client and trace interface.</p></details>
+        <details><summary>src/tec_agents/llm</summary><p>Qwen wrapper, prompts and textual tool-call parser.</p></details>
+        <details><summary>src/tec_agents/eval</summary><p>EvalTask, five-task configs, GoldRunner, metrics and experiment runner.</p></details>
+        <details><summary>scripts</summary><p>Smoke tests, deterministic runners and architecture comparison scripts.</p></details>
+        <details><summary>outputs / data</summary><p>Experiment JSON outputs, generated reports and processed TEC datasets.</p></details>
+      </div>
+    </section>
+
+    <section id="data" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">TEC Data</div><h2>Hourly regional TEC time series</h2></div></div>
+      <div class="grid two">
+        <div class="card"><h3>Experiment interval</h3><p><span class="chip">dataset_ref=default</span> <span class="chip">[2024-03-01, 2024-04-01)</span> <span class="chip good">744 hourly points</span></p><p class="subtle">The half-open interval convention avoids ambiguous month endpoints.</p></div>
+        <div class="card"><h3>Timeline</h3><div class="flow"><div class="flow-node">Jan 1<br>2024</div><span class="arrow">-></span><div class="flow-node">Mar 31<br>2024</div><span class="arrow">/</span><div class="flow-node">Mar task<br>744h</div><span class="arrow">-></span><div class="flow-node">Apr 1<br>exclusive</div></div></div>
+      </div>
+      <div class="table-wrap" id="datasetTable"></div>
+    </section>
+
+    <section id="mcp" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">MCP-like layer</div><h2>Tool execution pipeline</h2></div></div>
+      <div class="card">
+        <div class="flow">
+          <div class="flow-node">User query</div><span class="arrow">-></span><div class="flow-node">Agent</div><span class="arrow">-></span><div class="flow-node">tool_call text</div><span class="arrow">-></span><div class="flow-node">parser</div><span class="arrow">-></span><div class="flow-node">MCP client/server</div><span class="arrow">-></span><div class="flow-node">TEC tool</div><span class="arrow">-></span><div class="flow-node">Artifact store</div><span class="arrow">-></span><div class="flow-node">Observation</div>
+        </div>
+        <details><summary>Why handles instead of raw arrays?</summary><p>Tools return compact handles like <code>series_id</code>, <code>threshold_id</code>, <code>stats_id</code>, and <code>comparison_id</code>. The LLM sees handles and summaries, not full time-series arrays, keeping prompts compact and reproducible.</p></details>
+      </div>
+    </section>
+
+    <section id="tools" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Tool catalogue</div><h2>TEC primitive tools</h2></div></div>
+      <input class="searchbar" id="toolSearch" placeholder="Search tools by name, argument, artifact, scenario..." />
+      <div class="filterbar" id="toolFilters">
+        <button class="filter-btn active" data-tool-filter="all">all</button>
+        <button class="filter-btn" data-tool-filter="data">data</button>
+        <button class="filter-btn" data-tool-filter="math">math</button>
+        <button class="filter-btn" data-tool-filter="compare">compare</button>
+        <button class="filter-btn" data-tool-filter="report">report</button>
+        <button class="filter-btn" data-tool-filter="legacy">legacy</button>
+      </div>
+      <div class="grid tool-grid" id="toolCards"></div>
+    </section>
+
+    <section id="tasks" style="--accent:var(--orange)">
+      <div class="section-head"><div><div class="section-kicker">Benchmark stand</div><h2>Five tasks, four scenarios</h2></div></div>
+      <div class="grid" id="taskCards"></div>
+    </section>
+
+    <section id="gold" style="--accent:var(--green)">
+      <div class="section-head"><div><div class="section-kicker">GoldRunner</div><h2>Numerical oracle, not an agent</h2></div></div>
+      <div class="grid two">
+        <div class="card"><h3>Reference role</h3><p>GoldRunner computes correct structured artifacts after an agent run. It is not visible to prompts and does not make orchestration decisions.</p></div>
+        <div class="card"><h3>What it validates</h3><p>Thresholds, intervals, statistics, pairwise deltas, report artifact completeness and grounding.</p></div>
+      </div>
+    </section>
+
+    <section id="agents" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Agent architectures</div><h2>Single-agent, scripted roles, and full LLM roles</h2></div></div>
+      <div class="grid three">
+        <div class="card" style="--accent:var(--orange)"><h3>Qwen single-agent</h3><p>One LLM uses textual tool calls and state-aware observations. It does not see expected sequence, GoldRunner or missing goals.</p><div class="bars mini" data-mini="single"></div></div>
+        <div class="card" style="--accent:var(--green)"><h3>Rule-based multi-agent</h3><p>Scripted role trajectory: orchestrator -> data -> math -> analysis -> report. It passes 5/5 and validates the decomposition.</p><div class="flow"><div class="flow-node">orchestrator</div><span class="arrow">-></span><div class="flow-node">data</div><span class="arrow">-></span><div class="flow-node">math</div><span class="arrow">-></span><div class="flow-node">analysis</div><span class="arrow">-></span><div class="flow-node">report</div></div></div>
+        <div class="card" style="--accent:var(--red)"><h3>Qwen full LLM multi-agent</h3><p>All roles are model-driven. Runtime validates protocol and tools, but role and tool decisions come from LLM outputs.</p><p><span class="chip bad">0/5 success</span> <span class="chip bad">100% stalled</span></p></div>
+      </div>
+      <h3>Full LLM role contracts</h3>
+      <div class="grid" id="llmRoleCards"></div>
+    </section>
+
+    <section id="protocol" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Protocol blocks</div><h2>Strict XML-like handoff and tool protocol</h2></div></div>
+      <div class="grid two" id="protocolCards"></div>
+      <div class="callout" style="--accent:var(--red); margin-top:16px;"><strong>Anti-patterns:</strong> role_response is not a tool; agents are not tools; role names cannot appear as tool names; expected sequences, gold values and missing goals are not passed to prompts.</div>
+    </section>
+
+    <section id="metrics" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Evaluation metrics</div><h2>Protocol, sequence, role and numeric checks</h2></div></div>
+      <div class="grid two">
+        <details open><summary>Universal / protocol metrics</summary><p><code>success</code>, <code>overall_ok</code>, <code>parse_error_count</code>, <code>invalid_json_count</code>, <code>invalid_tool_name_count</code>, <code>invalid_role_protocol_count</code>, <code>forbidden_tool_call_count</code>, <code>repeated_tool_call_count</code>, <code>stalled_loop_detected</code>.</p></details>
+        <details><summary>Tool sequence metrics</summary><p><code>actual_tool_sequence</code>, <code>expected_tool_sequence</code>, <code>tool_sequence_match</code>, <code>tool_sequence_match_rate</code>.</p></details>
+        <details><summary>Role metrics</summary><p><code>role_agent_order</code>, <code>role_agent_order_match</code>, <code>required_role_agents_called</code>, <code>artifact_flow_valid</code>, <code>handoff_count</code>, retry/recovery counters.</p></details>
+        <details><summary>Task-specific numeric metrics</summary><p>High TEC threshold/interval/peak errors, stable interval errors, compare region numeric errors, report artifact grounding checks.</p></details>
+      </div>
+    </section>
+
+    <section id="results" style="--accent:var(--orange)">
+      <div class="section-head"><div><div class="section-kicker">Results comparison</div><h2>Where each architecture succeeds or fails</h2></div></div>
+      <h3>Per-task comparison</h3><div class="table-wrap" id="perTaskTable"></div>
+      <h3>Tool sequence comparison</h3><div class="table-wrap" id="toolSequenceTable"></div>
+      <h3>Numeric metric comparison</h3><div class="table-wrap" id="numericTable"></div>
+    </section>
+
+    <section id="failures" style="--accent:var(--red)">
+      <div class="section-head"><div><div class="section-kicker">Failure analysis</div><h2>Protocol collapse in full LLM multi-agent</h2></div></div>
+      <div class="grid two">
+        <div class="card chart-card" style="--accent:var(--red)"><h3>Protocol errors by task</h3><div class="bars" id="protocolErrorBars"></div></div>
+        <div class="card" style="--accent:var(--red)"><h3>Common failure modes</h3><p><span class="chip bad">DataAgent fails to return</span> <span class="chip bad">role_response as tool</span> <span class="chip bad">MathAgent without data</span> <span class="chip bad">stalled loops</span></p><p class="subtle">The current full LLM implementation does not yet hold role protocol discipline. This is a protocol/handoff problem, not evidence that TEC tools or GoldRunner are wrong.</p></div>
+      </div>
+      <h3>Role/protocol table</h3><div class="table-wrap" id="roleProtocolTable"></div>
+    </section>
+
+    <section style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Suggested charts</div><h2>Data-ready visualizations</h2></div></div>
+      <div class="grid two">
+        <div class="card"><h3>Implemented in this page</h3><p><span class="chip">success rate</span> <span class="chip">overall OK</span> <span class="chip">stalled loops</span> <span class="chip">tool sequence match</span> <span class="chip">per-task success</span> <span class="chip bad">protocol errors</span></p></div>
+        <div class="card"><h3>Future extensions</h3><p class="subtle">The prepared JSON assets can also drive TEC time-series overlays, stable-interval overlays, and richer role-flow diagrams without re-reading raw experiment outputs.</p></div>
+      </div>
+    </section>
+
+    <section id="appendix" style="--accent:var(--blue)">
+      <div class="section-head"><div><div class="section-kicker">Appendix</div><h2>Outputs and assets inventory</h2></div></div>
+      <details open><summary>Generated assets for future charts</summary><p>Architecture summary, per-task comparison, tool sequence comparison, protocol errors, numeric metrics, dataset, tools, five tasks and outputs inventory are stored as JSON in <code>outputs/reports/assets</code>.</p></details>
+      <div class="table-wrap" id="outputsTable"></div>
+    </section>
+  </main>
+
+  <footer class="wrap">Current conclusion: the deterministic role baseline validates the computational path; the current full LLM multi-agent implementation fails because of role protocol and handoff discipline.</footer>
+
+  <script type="application/json" id="report-data">{"architectureSummary": [{"Architecture": "Qwen single-agent", "Model": "Qwen/Qwen3.5-4B", "n_tasks": 5, "success_rate": "40%", "overall_ok_rate": "0%", "tool_sequence_match_rate": "60%", "role_order_match_rate": "n/a", "artifact_flow_valid_rate": "n/a", "stalled_loop_rate": "60%", "forbidden_tool_call_rate": "n/a"}, {"Architecture": "Rule-based multi-agent", "Model": "none", "n_tasks": 5, "success_rate": "100%", "overall_ok_rate": "100%", "tool_sequence_match_rate": "100%", "role_order_match_rate": "100%", "artifact_flow_valid_rate": "100%", "stalled_loop_rate": "0%", "forbidden_tool_call_rate": "n/a"}, {"Architecture": "Qwen full LLM multi-agent", "Model": "Qwen/Qwen3.5-4B", "n_tasks": 5, "success_rate": "0%", "overall_ok_rate": "0%", "tool_sequence_match_rate": "0%", "role_order_match_rate": "0%", "artifact_flow_valid_rate": "0%", "stalled_loop_rate": "100%", "forbidden_tool_call_rate": "100%"}], "perTask": [{"Preset": "hightec_midlat_europe", "Task type": "high_tec", "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False", "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None", "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True", "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"}, {"Preset": "stable_midlat_europe", "Task type": "stable_intervals", "Qwen single-agent result": "success=True, overall=False, seq=True, stall=False", "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None", "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True", "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent computes the simple chain but strict verdict may count parse repairs"}, {"Preset": "compare_midlat_europe_highlat_north", "Task type": "compare_regions", "Qwen single-agent result": "success=False, overall=False, seq=True, stall=True", "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None", "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True", "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"}, {"Preset": "compare_three_regions", "Task type": "compare_regions", "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True", "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None", "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True", "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"}, {"Preset": "report_midlat_europe", "Task type": "report", "Qwen single-agent result": "success=False, overall=False, seq=None, stall=True", "Rule-based multi-agent result": "success=True, overall=True, seq=True, stall=None", "Qwen full LLM multi-agent result": "success=False, overall=False, seq=None, stall=True", "Key difference": "rule workflow succeeds; full LLM role protocol fails; single-agent struggles with multi-artifact planning/finalization"}], "toolSequences": [{"Preset": "hightec_midlat_europe", "Expected sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals", "Qwen single actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals", "Rule multi actual": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals", "Full LLM multi actual": "tec_get_timeseries"}, {"Preset": "stable_midlat_europe", "Expected sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals", "Qwen single actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals", "Rule multi actual": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals", "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"}, {"Preset": "compare_midlat_europe_highlat_north", "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats", "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats", "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats", "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"}, {"Preset": "compare_three_regions", "Expected sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats", "Qwen single actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats", "Rule multi actual": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats", "Full LLM multi actual": "tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats"}, {"Preset": "report_midlat_europe", "Expected sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals", "Qwen single actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_stability_thresholds -> tec_detect_stable_intervals -> tec_compute_high_threshold", "Rule multi actual": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals", "Full LLM multi actual": "tec_get_timeseries -> tec_series_profile"}], "roleProtocol": [{"Preset": "hightec_midlat_europe", "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent", "Full LLM role order": "data_agent", "Full LLM protocol errors": 3, "Full LLM forbidden tools": 3, "Full LLM stalled?": true, "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "stable_midlat_europe", "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent", "Full LLM role order": "data_agent", "Full LLM protocol errors": 4, "Full LLM forbidden tools": 4, "Full LLM stalled?": true, "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_midlat_europe_highlat_north", "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent", "Full LLM role order": "math_agent", "Full LLM protocol errors": 4, "Full LLM forbidden tools": 4, "Full LLM stalled?": true, "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_three_regions", "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent", "Full LLM role order": "math_agent", "Full LLM protocol errors": 4, "Full LLM forbidden tools": 4, "Full LLM stalled?": true, "Full LLM error": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "report_midlat_europe", "Rule role order": "orchestrator -> data_agent -> math_agent -> analysis_agent -> report_agent", "Full LLM role order": "data_agent", "Full LLM protocol errors": 4, "Full LLM forbidden tools": 4, "Full LLM stalled?": true, "Full LLM error": "data_agent failed: Exceeded max_role_steps=8."}], "numericMetrics": [{"Preset": "hightec_midlat_europe", "Metric": "threshold_abs_error", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0.0, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "hightec_midlat_europe", "Metric": "interval_count_error", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0, "Rule multi-agent error": 0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "hightec_midlat_europe", "Metric": "global_peak_abs_error", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0.0, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "stable_midlat_europe", "Metric": "stable_interval_count_error", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0, "Rule multi-agent error": 0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "stable_midlat_europe", "Metric": "top_stable_duration_abs_error", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0.0, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_midlat_europe_highlat_north", "Metric": "mean_abs_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0.0, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_midlat_europe_highlat_north", "Metric": "p90_abs_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": 0.0, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_midlat_europe_highlat_north", "Metric": "pairwise_delta_count_match", "Gold / expected": "0 error / true match", "Qwen single-agent error": true, "Rule multi-agent error": true, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_three_regions", "Metric": "mean_abs_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_three_regions", "Metric": "p90_abs_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "compare_three_regions", "Metric": "pairwise_delta_count_match", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": true, "Full LLM multi-agent error/status": "math_agent failed: Exceeded max_role_steps=8."}, {"Preset": "report_midlat_europe", "Metric": "required_artifacts_present", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": true, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "report_midlat_europe", "Metric": "report_grounded_in_artifacts", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": true, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "report_midlat_europe", "Metric": "report_high_tec_interval_count_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}, {"Preset": "report_midlat_europe", "Metric": "report_stable_interval_count_error_avg", "Gold / expected": "0 error / true match", "Qwen single-agent error": null, "Rule multi-agent error": 0.0, "Full LLM multi-agent error/status": "data_agent failed: Exceeded max_role_steps=8."}], "datasets": [{"Dataset path": "data\\processed\\tec_regions_2024_01_01_to_2024_04_01_hourly.parquet", "Rows": 2184, "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south", "Start": "2024-01-01 00:00:00", "End": "2024-03-31 23:00:00", "Frequency": "0 days 01:00:00"}, {"Dataset path": "data\\processed\\tec_regions_2024_03_hourly.parquet", "Rows": 745, "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south", "Start": "2024-03-01 00:00:00", "End": "2024-04-01 00:00:00", "Frequency": "0 days 01:00:00"}, {"Dataset path": "data\\processed\\tec_regions_2024_03_hourly.csv", "Rows": 745, "Columns/regions": "equatorial_atlantic, equatorial_africa, equatorial_pacific, midlat_europe, midlat_usa, midlat_asia, midlat_south_america, midlat_australia, highlat_north, highlat_south", "Start": "2024-03-01 00:00:00", "End": "2024-04-01 00:00:00", "Frequency": "0 days 01:00:00"}], "tools": [{"Tool": "tec_compare_regions", "Назначение": "Compare aggregated TEC statistics across two or more predefined regions for the same time interval.", "Основные аргументы": "dataset_ref, region_ids, start, end, freq, metrics", "Возвращаемые artifacts": "dataset_ref, start, end, stats", "Используется в сценариях": "legacy/aggregate compare; not expected primitive workflow"}, {"Tool": "tec_compare_stats", "Назначение": "Compare two or more previously computed TEC statistics handles and return structured pairwise metric deltas.", "Основные аргументы": "stats_ids, reference_stats_id, metrics", "Возвращаемые artifacts": "comparison_id, stats_ids, reference_stats_id, regions, items, pairwise_deltas", "Используется в сценариях": "compare_regions"}, {"Tool": "tec_compute_high_threshold", "Назначение": "Compute a high-TEC threshold for a stored time series. Usually use method='quantile' and q=0.9 unless the user explicitly asks for another threshold.", "Основные аргументы": "series_id, method, q, value", "Возвращаемые artifacts": "threshold_id, series_id, method, q, value, n_points_used", "Используется в сценариях": "high_tec, report"}, {"Tool": "tec_compute_series_stats", "Назначение": "Compute selected deterministic statistics for a previously loaded TEC time series and return a stats_id handle.", "Основные аргументы": "series_id, metrics", "Возвращаемые artifacts": "stats_id, series_id, region_id, n_points, finite_points, metrics", "Используется в сценариях": "compare_regions, report"}, {"Tool": "tec_compute_stability_thresholds", "Назначение": "Compute rolling-window thresholds for stable interval detection using quantiles of rolling TEC variability.", "Основные аргументы": "series_id, window_minutes, method, q_delta, q_std", "Возвращаемые artifacts": "threshold_id, series_id, method, window_minutes, q_delta, q_std, max_delta_threshold, rolling_std_threshold, estimated_step_minutes, window_points, n_points, max_abs_delta, max_std, n_windows_used", "Используется в сценариях": "stable_intervals, report"}, {"Tool": "tec_detect_high_intervals", "Назначение": "Detect intervals where TEC is greater than or equal to a previously computed high-TEC threshold.", "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes", "Возвращаемые artifacts": "series_id, threshold_id, threshold_value, n_intervals, intervals", "Используется в сценариях": "high_tec, report"}, {"Tool": "tec_detect_stable_intervals", "Назначение": "Detect stable TEC intervals using previously computed stability thresholds.", "Основные аргументы": "series_id, threshold_id, min_duration_minutes, merge_gap_minutes", "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals", "Используется в сценариях": "stable_intervals, report"}, {"Tool": "tec_find_stable_intervals_direct", "Назначение": "Detect stable TEC intervals using explicit variability limits without a separate threshold computation step.", "Основные аргументы": "series_id, window_minutes, max_delta, max_abs_delta, max_std, min_duration_minutes, merge_gap_minutes", "Возвращаемые artifacts": "series_id, threshold_id, n_intervals, intervals", "Используется в сценариях": "direct stable helper; not expected five-task sequence"}, {"Tool": "tec_get_timeseries", "Назначение": "Load a TEC time series for one predefined geographic region and a half-open time interval [start, end).", "Основные аргументы": "dataset_ref, region_id, start, end, freq", "Возвращаемые artifacts": "series_id, metadata", "Используется в сценариях": "all scenarios"}, {"Tool": "tec_series_profile", "Назначение": "Return descriptive statistics for a previously loaded TEC time series.", "Основные аргументы": "series_id", "Возвращаемые artifacts": "series_id, n_points, finite_points, start, end, min_value, max_value, mean_value, median_value, std_value, q10, q25, q75, q90", "Используется в сценариях": "optional profiling; sometimes attempted by LLM roles"}], "fiveTasks": [{"Preset ID": "hightec_midlat_europe", "Task type": "high_tec", "Natural-language query": "Find high TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using q=0.90 threshold.", "Regions": "midlat_europe", "Period": "[2024-03-01, 2024-04-01)", "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_high_threshold -> tec_detect_high_intervals"}, {"Preset ID": "stable_midlat_europe", "Task type": "stable_intervals", "Natural-language query": "Find stable TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01 using the configured stability parameters.", "Regions": "midlat_europe", "Period": "[2024-03-01, 2024-04-01)", "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"}, {"Preset ID": "compare_midlat_europe_highlat_north", "Task type": "compare_regions", "Natural-language query": "Compare TEC statistics for midlat_europe and highlat_north from 2024-03-01 to 2024-04-01.", "Regions": "midlat_europe, highlat_north", "Period": "[2024-03-01, 2024-04-01)", "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"}, {"Preset ID": "compare_three_regions", "Task type": "compare_regions", "Natural-language query": "Compare TEC statistics for equatorial_atlantic, midlat_europe, and highlat_north from 2024-03-01 to 2024-04-01.", "Regions": "equatorial_atlantic, midlat_europe, highlat_north", "Period": "[2024-03-01, 2024-04-01)", "Expected primitive tool sequence": "tec_get_timeseries -> tec_get_timeseries -> tec_get_timeseries -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compute_series_stats -> tec_compare_stats"}, {"Preset ID": "report_midlat_europe", "Task type": "report", "Natural-language query": "Build a concise TEC analysis report for midlat_europe from 2024-03-01 to 2024-04-01. Include basic statistics, high TEC intervals, stable intervals, and a short interpretation based only on computed artifacts.", "Regions": "midlat_europe", "Period": "[2024-03-01, 2024-04-01)", "Expected primitive tool sequence": "tec_get_timeseries -> tec_compute_series_stats -> tec_compute_high_threshold -> tec_detect_high_intervals -> tec_compute_stability_thresholds -> tec_detect_stable_intervals"}], "outputs": [{"File": "outputs\\metrics\\multi_agent_rule_based_compare_midlat_europe_highlat_north_five_task.json", "Kind": "Rule-based multi-agent", "Size bytes": 59280}, {"File": "outputs\\metrics\\multi_agent_rule_based_compare_three_regions_five_task.json", "Kind": "Rule-based multi-agent", "Size bytes": 83505}, {"File": "outputs\\metrics\\multi_agent_rule_based_five_task_batch.json", "Kind": "Rule-based multi-agent", "Size bytes": 692237}, {"File": "outputs\\metrics\\multi_agent_rule_based_hightec_midlat_europe_five_task.json", "Kind": "Rule-based multi-agent", "Size bytes": 56706}, {"File": "outputs\\metrics\\multi_agent_rule_based_report_midlat_europe_five_task.json", "Kind": "Rule-based multi-agent", "Size bytes": 231026}, {"File": "outputs\\metrics\\multi_agent_rule_based_stable_midlat_europe_five_task.json", "Kind": "Rule-based multi-agent", "Size bytes": 196430}, {"File": "outputs\\metrics\\qwen_multi_agent_batch_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 263742}, {"File": "outputs\\metrics\\qwen_multi_agent_compare_midlat_europe_highlat_north_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 36605}, {"File": "outputs\\metrics\\qwen_multi_agent_compare_three_regions_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 40875}, {"File": "outputs\\metrics\\qwen_multi_agent_hightec_midlat_europe_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 29430}, {"File": "outputs\\metrics\\qwen_multi_agent_report_midlat_europe_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 64037}, {"File": "outputs\\metrics\\qwen_multi_agent_stable_midlat_europe_colab.json", "Kind": "Qwen full LLM multi-agent", "Size bytes": 69565}, {"File": "outputs\\metrics\\qwen_single_agent_batch_colab.json", "Kind": "Qwen single-agent", "Size bytes": 665166}, {"File": "outputs\\metrics\\qwen_single_agent_compare_midlat_europe_highlat_north_colab.json", "Kind": "Qwen single-agent", "Size bytes": 47403}, {"File": "outputs\\metrics\\qwen_single_agent_compare_three_regions_colab.json", "Kind": "Qwen single-agent", "Size bytes": 41065}, {"File": "outputs\\metrics\\qwen_single_agent_hightec_midlat_europe_colab.json", "Kind": "Qwen single-agent", "Size bytes": 55117}, {"File": "outputs\\metrics\\qwen_single_agent_report_midlat_europe_colab.json", "Kind": "Qwen single-agent", "Size bytes": 230740}, {"File": "outputs\\metrics\\qwen_single_agent_smoke_colab.json", "Kind": "Qwen single-agent", "Size bytes": 60512}, {"File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v2.json", "Kind": "Qwen single-agent", "Size bytes": 10774}, {"File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v3.json", "Kind": "Qwen single-agent", "Size bytes": 52762}, {"File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v4_date_checked.json", "Kind": "Qwen single-agent", "Size bytes": 59383}, {"File": "outputs\\metrics\\qwen_single_agent_smoke_colab_v5_date_checked.json", "Kind": "Qwen single-agent", "Size bytes": 47481}, {"File": "outputs\\metrics\\qwen_single_agent_stable_midlat_europe_colab.json", "Kind": "Qwen single-agent", "Size bytes": 227563}, {"File": "outputs\\metrics\\real_multi_agent_rule_based_march_2024.json", "Kind": "Real deterministic multi-agent experiment", "Size bytes": 1922906}, {"File": "outputs\\metrics\\real_single_agent_rule_based_march_2024.json", "Kind": "Real deterministic single-agent experiment", "Size bytes": 1793641}, {"File": "outputs\\metrics\\smoke_single_agent_rule_based.json", "Kind": "Smoke output", "Size bytes": 127427}]}</script>
+  <script>
+    const data = JSON.parse(document.getElementById('report-data').textContent);
+    const archColor = name => name.includes('Rule') ? 'var(--green)' : name.includes('full') ? 'var(--red)' : 'var(--orange)';
+    const parsePct = value => value === 'n/a' ? null : Number(String(value).replace('%','')) || 0;
+    const chip = value => {
+      const text = String(value ?? 'n/a');
+      const cls = text === '100%' || text === 'true' || text.includes('success=True') ? 'good' : (text === '0%' || text === 'false' || text.includes('success=False') || text.includes('failed') ? 'bad' : 'warn');
+      return `<span class="chip ${cls}">${text}</span>`;
+    };
+    const seq = text => String(text || '').split(' -> ').map(x => `<span class="chip">${x}</span>`).join('<span class="arrow">-></span>');
+    const table = (rows, columns) => `<table><thead><tr>${columns.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${columns.map(c=>`<td>${formatCell(r[c], c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    function formatCell(v, col) {
+      if (v == null) return '<span class="chip">n/a</span>';
+      if (col.toLowerCase().includes('sequence') || col.includes('actual')) return `<div class="sequence">${seq(v)}</div>`;
+      if (col.toLowerCase().includes('rate') || col.toLowerCase().includes('result') || col.includes('stalled') || col.includes('error')) return chip(v);
+      return String(v);
+    }
+    function renderHero() {
+      const el = document.getElementById('heroCards');
+      el.innerHTML = data.architectureSummary.map(row => {
+        const accent = archColor(row.Architecture);
+        const keys = Object.keys(row).filter(k => k.includes('rate')).slice(0,5);
+        return `<article class="card metric-card" style="--accent:${accent}"><div><span class="chip">${row.Model}</span><h3>${row.Architecture}</h3></div><div class="metric-list">${keys.map(k=>`<div class="metric-row"><span>${k}</span><strong>${row[k]}</strong></div>`).join('')}</div></article>`;
+      }).join('');
+    }
+    function renderBars(container, metric) {
+      container.innerHTML = data.architectureSummary.map(row => {
+        const val = parsePct(row[metric]);
+        const width = val == null ? 0 : val;
+        return `<div class="bar-row"><div class="bar-label">${row.Architecture}</div><div class="bar-track"><div class="bar-fill" style="--bar:${archColor(row.Architecture)};--w:${width}%"></div></div><div class="bar-val">${row[metric]}</div></div>`;
+      }).join('');
+    }
+    function renderAllCharts() {
+      document.querySelectorAll('[data-chart]').forEach(el => renderBars(el, el.dataset.chart));
+      renderPerTaskSuccessMatrix();
+      const protocol = document.getElementById('protocolErrorBars');
+      protocol.innerHTML = data.roleProtocol.map(row => {
+        const errors = Number(row['Full LLM protocol errors'] || 0);
+        const forbidden = Number(row['Full LLM forbidden tools'] || 0);
+        const max = 8;
+        return `<div class="bar-row"><div class="bar-label">${row.Preset}</div><div><div class="bar-track"><div class="bar-fill" style="--bar:var(--red);--w:${errors/max*100}%"></div></div><div class="bar-track" style="margin-top:6px"><div class="bar-fill" style="--bar:var(--orange);--w:${forbidden/max*100}%"></div></div></div><div class="bar-val">${errors} / ${forbidden}</div></div>`;
+      }).join('');
+    }
+    function resultStatus(text) {
+      const s = String(text || '');
+      if (s.includes('success=True')) return ['PASS', 'good'];
+      if (s.includes('success=False')) return ['FAIL', 'bad'];
+      return ['N/A', ''];
+    }
+    function renderPerTaskSuccessMatrix() {
+      const rows = data.perTask.map(row => {
+        const single = resultStatus(row['Qwen single-agent result']);
+        const rule = resultStatus(row['Rule-based multi-agent result']);
+        const full = resultStatus(row['Qwen full LLM multi-agent result']);
+        return `<div class="success-row"><div><strong>${row.Preset}</strong><br><span class="subtle">${row['Task type']}</span></div><div>${chip(single[0], single[1])}</div><div>${chip(rule[0], rule[1])}</div><div>${chip(full[0], full[1])}</div></div>`;
+      }).join('');
+      document.getElementById('perTaskSuccessMatrix').innerHTML = `<div class="success-row success-head"><div>Preset</div><div>Qwen single</div><div>Rule multi</div><div>Full LLM multi</div></div>${rows}`;
+    }
+    function renderTables() {
+      document.getElementById('architectureTable').innerHTML = table(data.architectureSummary, Object.keys(data.architectureSummary[0]));
+      document.getElementById('datasetTable').innerHTML = table(data.datasets, Object.keys(data.datasets[0]));
+      document.getElementById('perTaskTable').innerHTML = table(data.perTask, Object.keys(data.perTask[0]));
+      document.getElementById('toolSequenceTable').innerHTML = table(data.toolSequences, Object.keys(data.toolSequences[0]));
+      document.getElementById('roleProtocolTable').innerHTML = table(data.roleProtocol, Object.keys(data.roleProtocol[0]));
+      document.getElementById('numericTable').innerHTML = table(data.numericMetrics, Object.keys(data.numericMetrics[0]));
+      document.getElementById('outputsTable').innerHTML = table(data.outputs, Object.keys(data.outputs[0]));
+    }
+    let activeToolFilter = 'all';
+    function toolCategory(t) {
+      const name = String(t.Tool || '').toLowerCase();
+      const scenario = String(t['Используется в сценариях'] || '').toLowerCase();
+      if (scenario.includes('legacy')) return 'legacy';
+      if (name.includes('compare')) return 'compare';
+      if (scenario.includes('report')) return 'report';
+      if (name.includes('get_timeseries') || name.includes('series_profile')) return 'data';
+      return 'math';
+    }
+    function renderTools(filter='') {
+      const q = filter.toLowerCase();
+      const rows = data.tools.filter(t => {
+        const textMatch = JSON.stringify(t).toLowerCase().includes(q);
+        const category = toolCategory(t);
+        const filterMatch = activeToolFilter === 'all' || category === activeToolFilter || String(t['Используется в сценариях'] || '').toLowerCase().includes(activeToolFilter);
+        return textMatch && filterMatch;
+      });
+      document.getElementById('toolCards').innerHTML = rows.map(t => {
+        const legacy = String(t['Используется в сценариях']).includes('legacy');
+        const category = toolCategory(t);
+        return `<article class="card tool-card" style="--accent:${legacy ? 'var(--orange)' : 'var(--blue)'}"><h3>${t.Tool}</h3><p>${chip(category)}</p><p class="subtle">${t['Назначение']}</p><p><span class="chip">${t['Используется в сценариях']}</span>${legacy ? '<span class="chip warn">not expected primitive</span>' : ''}</p><details><summary>Args and artifacts</summary><p><strong>Args:</strong> ${t['Основные аргументы']}</p><p><strong>Returns:</strong> ${t['Возвращаемые artifacts']}</p></details></article>`;
+      }).join('');
+    }
+    function renderTasks() {
+      document.getElementById('taskCards').innerHTML = data.fiveTasks.map(t => `<article class="card" style="--accent:${t['Task type'].includes('compare') ? 'var(--orange)' : 'var(--blue)'}"><h3>${t['Preset ID']}</h3><p class="subtle">${t['Natural-language query']}</p><p>${chip(t['Task type'])} ${chip(t.Regions)} ${chip(t.Period)}</p><div class="sequence">${seq(t['Expected primitive tool sequence'])}</div></article>`).join('');
+    }
+    function renderRolesAndProtocol() {
+      const roles = [
+        ['LLMOrchestratorAgent','role_action only','no tools','chooses role handoffs'],
+        ['LLMDataAgent','tool_call or role_response','data tools','loads series artifacts'],
+        ['LLMMathAgent','tool_call or role_response','math tools','computes numerical artifacts'],
+        ['LLMAnalysisAgent','role_response only','no tools','produces findings'],
+        ['LLMReportAgent','final_answer or cannot_complete','no tools','writes final answer']
+      ];
+      document.getElementById('llmRoleCards').innerHTML = roles.map(r => `<article class="card"><h3>${r[0]}</h3><p>${chip(r[1])} ${chip(r[2])}</p><p class="subtle">${r[3]}</p></article>`).join('');
+      const blocks = [
+        ['role_action','Orchestrator','Call a role or finish','<role_action>\n{"action":"call_role","role":"data_agent","message":"retrieve data"}\n</role_action>'],
+        ['tool_call','DataAgent / MathAgent','Call an allowed TEC tool','<tool_call>\n{"name":"tec_get_timeseries","arguments":{"region_id":"midlat_europe"}}\n</tool_call>'],
+        ['role_response','Workers','Return role status/artifacts/findings','<role_response>\n{"status":"done","message":"data ready","artifacts":{}}\n</role_response>'],
+        ['final_answer','ReportAgent','Return final answer','<final_answer>\n{"answer":"..."}\n</final_answer>']
+      ];
+      document.getElementById('protocolCards').innerHTML = blocks.map(b => `<details open><summary>${b[0]} / ${b[1]}</summary><p class="subtle">${b[2]}</p><div class="codeblock">${b[3].replaceAll('<','&lt;').replaceAll('>','&gt;')}</div></details>`).join('');
+    }
+    renderHero();
+    renderAllCharts();
+    renderTables();
+    renderTools();
+    renderTasks();
+    renderRolesAndProtocol();
+    document.getElementById('toolSearch').addEventListener('input', e => renderTools(e.target.value));
+    document.getElementById('toolFilters').addEventListener('click', e => {
+      const btn = e.target.closest('[data-tool-filter]');
+      if (!btn) return;
+      activeToolFilter = btn.dataset.toolFilter;
+      document.querySelectorAll('[data-tool-filter]').forEach(b => b.classList.toggle('active', b === btn));
+      renderTools(document.getElementById('toolSearch').value);
+    });
+  </script>
+</body>
+</html>
