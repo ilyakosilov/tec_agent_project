@@ -190,8 +190,9 @@ class RoleNeed:
 @dataclass
 class RoleResponse:
     status: str
-    role: str
+    role: str = ""
     summary: str = ""
+    message: str = ""
     produced_artifact_types: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
     findings: list[str] = field(default_factory=list)
@@ -200,10 +201,12 @@ class RoleResponse:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RoleResponse":
         needs = data.get("needs") or []
+        message = str(data.get("message") or data.get("summary") or "")
         return cls(
             status=str(data.get("status") or "done"),
             role=str(data.get("role") or ""),
             summary=str(data.get("summary") or data.get("message") or ""),
+            message=message,
             produced_artifact_types=[
                 str(item) for item in (data.get("produced_artifact_types") or [])
             ],
@@ -354,7 +357,7 @@ def parse_typed_role_output(text: str, role: str) -> TypedParseResult:
             return parsed
         if tag == "role_response":
             parsed = parse_typed_role_response(text)
-            if parsed.ok and parsed.value.role != role:
+            if parsed.ok and parsed.value.role and parsed.value.role != role:
                 return _error("role_response", "schema_error", f"role_response.role must be {role}.", text)
             return parsed
         return _error(tag, "protocol_violation", f"{role} may output only tool_call or role_response.", text)
@@ -363,7 +366,7 @@ def parse_typed_role_output(text: str, role: str) -> TypedParseResult:
         if tag != "role_response":
             return _error(tag, "protocol_violation", "AnalysisAgent may output only role_response.", text)
         parsed = parse_typed_role_response(text)
-        if parsed.ok and parsed.value.role != "analysis_agent":
+        if parsed.ok and parsed.value.role and parsed.value.role != "analysis_agent":
             return _error("role_response", "schema_error", "role_response.role must be analysis_agent.", text)
         return parsed
 
@@ -372,7 +375,7 @@ def parse_typed_role_output(text: str, role: str) -> TypedParseResult:
             return parse_typed_final_answer(text)
         if tag == "role_response":
             parsed = parse_typed_role_response(text)
-            if parsed.ok and parsed.value.role != "report_agent":
+            if parsed.ok and parsed.value.role and parsed.value.role != "report_agent":
                 return _error("role_response", "schema_error", "role_response.role must be report_agent.", text)
             return parsed
         return _error(tag, "protocol_violation", "ReportAgent may output only final_answer or role_response.", text)
@@ -424,8 +427,10 @@ def validate_role_response(response: RoleResponse) -> str | None:
 
     if response.status not in {"done", "partial", "cannot_complete", "failed"}:
         return "RoleResponse.status must be done, partial, cannot_complete, or failed."
-    if response.role not in ROLE_NAMES:
+    if response.role and response.role not in ROLE_NAMES:
         return "RoleResponse.role must be a known worker role."
+    if not (response.message.strip() or response.summary.strip()):
+        return "RoleResponse.message is required."
     return None
 
 
@@ -568,12 +573,29 @@ def find_protocol_blocks(text: str) -> list[dict[str, Any]]:
 
 
 def clean_typed_output(raw_text: str) -> str:
-    """Return the first complete typed protocol block, preserving exact text."""
+    """Return the first complete typed protocol block after chat-template cleanup."""
 
-    blocks = find_protocol_blocks(raw_text)
+    text = _strip_generation_noise(raw_text)
+    blocks = find_protocol_blocks(text)
     if not blocks:
         return ""
     return blocks[0]["block"]
+
+
+def _strip_generation_noise(raw_text: str) -> str:
+    """Remove common chat-template and reasoning fragments from model output."""
+
+    text = str(raw_text or "")
+    text = re.sub(r"<think\b[^>]*>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(
+        r"<\|im_start\|>\s*(?:system|user|assistant)?",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    text = text.replace("<|im_end|>", "")
+    text = re.sub(r"(?im)^\s*(?:system|user|assistant)\s*$", "", text)
+    return text.strip()
 
 
 def _parse_json_block(text: str, tag: str) -> TypedParseResult:

@@ -908,12 +908,19 @@ def infer_task_state(user_query: str) -> dict[str, Any]:
     lower = user_query.lower()
     task_type = "unknown"
 
-    if "stable" in lower or "low variability" in lower or "quiet" in lower:
+    if (
+        "analysis report" in lower
+        or "build a report" in lower
+        or "report" in lower
+        or "include basic statistics" in lower
+        or "summary" in lower
+        or "summarize" in lower
+    ):
+        task_type = "report"
+    elif "stable" in lower or "low variability" in lower or "quiet" in lower:
         task_type = "stable_intervals"
     elif "compare" in lower or "comparison" in lower:
         task_type = "compare_regions"
-    elif "report" in lower or "summary" in lower or "summarize" in lower:
-        task_type = "report"
     elif "high_tec" in lower or ("high" in lower and "tec" in lower):
         task_type = "high_tec"
 

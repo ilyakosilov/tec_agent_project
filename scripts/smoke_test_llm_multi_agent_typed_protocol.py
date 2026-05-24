@@ -15,16 +15,22 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 
-from tec_agents.agents.llm_multi_agent_typed import build_typed_state_packet
+from tec_agents.agents.llm_multi_agent_typed import (
+    build_typed_state_packet,
+    enrich_typed_role_response,
+)
 from tec_agents.agents.llm_multi_agent_typed_prompts import (
     build_typed_orchestrator_prompt,
     build_typed_orchestrator_state_message,
+    build_typed_role_response_as_tool_repair_message,
     build_typed_role_prompt,
     build_typed_role_state_message,
 )
 from tec_agents.agents.llm_multi_agent_typed_protocol import (
     RoleAssignment,
+    RoleResponse,
     RoleScope,
+    clean_typed_output,
     make_tool_observation,
     parse_typed_role_action,
     parse_typed_role_output,
@@ -49,6 +55,8 @@ def main() -> None:
     test_role_action_schema()
     test_role_output_protocols()
     test_tool_observation_and_duplicates()
+    test_minimal_role_response_enrichment_and_repair()
+    test_output_cleaner_removes_chat_template_noise()
     test_prompts_and_state_packets_hide_forbidden_hints()
     print("Typed LLM multi-agent protocol smoke test finished successfully.")
 
@@ -122,18 +130,25 @@ def test_role_output_protocols() -> None:
     assert parsed.ok
     assert parsed.value.name == "tec_get_timeseries"
 
-    data_response = (
-        '<role_response>{"status":"done","role":"data_agent","summary":"ready",'
-        '"produced_artifact_types":["series_id"],"artifact_refs":["series_1"],"findings":[],"needs":[]}</role_response>'
-    )
+    data_response = '<role_response>{"status":"done","message":"done"}</role_response>'
     parsed = parse_typed_role_output(data_response, "data_agent")
     assert parsed.ok
-    assert parsed.value.role == "data_agent"
+    assert parsed.value.role == ""
+    assert parsed.value.message == "done"
+
+    minimal_cannot_complete = (
+        '<role_response>{"status":"cannot_complete","message":"cannot complete"}</role_response>'
+    )
+    parsed = parse_typed_role_output(minimal_cannot_complete, "math_agent")
+    assert parsed.ok
+    assert parsed.value.status == "cannot_complete"
 
     role_response_as_tool = '<tool_call>{"name":"role_response","arguments":{}}</tool_call>'
     parsed = parse_typed_role_output(role_response_as_tool, "data_agent")
     assert not parsed.ok
     assert parsed.error_code == "protocol_violation"
+    assert "not a tool" in (parsed.error_message or "")
+    assert parsed.error_code != "invalid_xml"
 
     agent_as_tool = '<tool_call>{"name":"report_agent","arguments":{}}</tool_call>'
     parsed = parse_typed_role_output(agent_as_tool, "data_agent")
@@ -201,6 +216,79 @@ def test_tool_observation_and_duplicates() -> None:
     assert first == duplicate
 
 
+def test_minimal_role_response_enrichment_and_repair() -> None:
+    assignment = RoleAssignment(
+        objective="prepare_data_artifacts",
+        task_summary="Prepare data.",
+        scope=RoleScope(
+            dataset_ref="default",
+            regions=["midlat_europe"],
+            start="2024-03-01",
+            end="2024-04-01",
+            task_intent="high_tec",
+        ),
+        available_input_types=[],
+        expected_output_type="data_artifacts",
+        completion_criteria="Return role_response when data handles are visible.",
+        constraints=["Use only data tools."],
+    )
+    observation = make_tool_observation(
+        tool_name="tec_get_timeseries",
+        status="ok",
+        result={
+            "series_id": "series_abc",
+            "metadata": {"region_id": "midlat_europe", "n_points": 744},
+        },
+    )
+    context = {
+        "tool_observations": [observation.to_dict()],
+        "data_artifacts": {
+            "series_by_region": {
+                "midlat_europe": {
+                    "series_id": "series_abc",
+                    "metadata": {"n_points": 744},
+                }
+            }
+        },
+    }
+    response = RoleResponse(status="done", message="done")
+    enriched = enrich_typed_role_response(
+        response=response,
+        role="data_agent",
+        assignment=assignment,
+        context=context,
+        observation_start=0,
+    )
+    assert enriched.role == "data_agent"
+    assert enriched.status == "done"
+    assert enriched.message == "done"
+    assert "series_id" in enriched.produced_artifact_types
+    assert "series_abc" in enriched.artifact_refs
+
+    repair = build_typed_role_response_as_tool_repair_message()
+    assert '<role_response>\n{"status":"done","message":"done"}\n</role_response>' in repair
+    assert "Do not use `<tool_call>`." in repair
+    for fragment in FORBIDDEN_PROMPT_FRAGMENTS:
+        assert fragment not in repair, fragment
+
+
+def test_output_cleaner_removes_chat_template_noise() -> None:
+    raw = """
+<|im_start|>assistant
+<think><role_response>{"status":"failed","message":"hidden"}</role_response></think>
+user
+The previous message was invalid.
+assistant
+<role_response>
+{"status":"done","message":"done"}
+</role_response>
+extra text
+<|im_end|>
+"""
+    cleaned = clean_typed_output(raw)
+    assert cleaned == '<role_response>\n{"status":"done","message":"done"}\n</role_response>'
+
+
 def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
     assignment = RoleAssignment(
         objective="prepare_data_artifacts",
@@ -245,6 +333,9 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
     )
     for fragment in FORBIDDEN_PROMPT_FRAGMENTS:
         assert fragment not in rendered, fragment
+    assert '<tool_call>\n{"name":"role_response","arguments":{}}\n</tool_call>' in rendered
+    assert '<role_response>\n{"status":"done","message":"done"}\n</role_response>' in rendered
+    assert "role_response is not a tool" in rendered
 
 
 if __name__ == "__main__":

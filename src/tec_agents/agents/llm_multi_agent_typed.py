@@ -27,6 +27,7 @@ from tec_agents.agents.llm_multi_agent_typed_prompts import (
     build_typed_role_action_repair_message,
     build_typed_role_output_repair_message,
     build_typed_role_prompt,
+    build_typed_role_response_as_tool_repair_message,
     build_typed_role_state_message,
 )
 from tec_agents.agents.llm_multi_agent_typed_protocol import (
@@ -53,6 +54,7 @@ class LLMTypedRoleOutput:
     role: str
     status: str
     summary: str = ""
+    message: str = ""
     assignment: dict[str, Any] | None = None
     produced_artifact_types: list[str] = field(default_factory=list)
     artifact_refs: list[str] = field(default_factory=list)
@@ -254,6 +256,7 @@ class LLMTypedRoleAgent:
 
         consecutive_parse_errors = 0
         tool_call_count = 0
+        role_observation_start = len(context.get("tool_observations") or [])
 
         for step in range(1, self.max_role_steps + 1):
             raw = self.model.generate(
@@ -285,13 +288,14 @@ class LLMTypedRoleAgent:
                     output.summary = parsed.error_message or "Typed parse failed."
                     return output
                 output.repair_attempt_count += 1
+                repair_message = _typed_repair_message_for_parse_error(
+                    self.role,
+                    parsed,
+                )
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_typed_role_output_repair_message(
-                            self.role,
-                            parsed.error_message or "Invalid typed output.",
-                        ),
+                        "content": repair_message,
                     }
                 )
                 continue
@@ -420,13 +424,21 @@ class LLMTypedRoleAgent:
                 continue
 
             if parsed.kind == "role_response":
-                response: RoleResponse = parsed.value
+                response = enrich_typed_role_response(
+                    response=parsed.value,
+                    role=self.role,
+                    assignment=assignment,
+                    context=context,
+                    observation_start=role_observation_start,
+                )
                 output.status = response.status
                 output.summary = response.summary
+                output.message = response.message
                 output.produced_artifact_types = response.produced_artifact_types
                 output.artifact_refs = response.artifact_refs
                 output.findings = response.findings
                 output.needs = [need.to_dict() for need in response.needs]
+                role_step["enriched_role_response"] = response.to_dict()
                 output.role_steps.append(role_step)
                 _merge_typed_role_response(context, response)
                 return output
@@ -694,6 +706,7 @@ class LLMFullTypedMultiAgent:
                     "role": role,
                     "status": role_output.status,
                     "summary": role_output.summary,
+                    "message": role_output.message,
                     "produced_artifact_types": role_output.produced_artifact_types,
                     "artifact_refs": role_output.artifact_refs,
                     "findings": role_output.findings,
@@ -931,6 +944,161 @@ def build_typed_available_artifacts(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def enrich_typed_role_response(
+    *,
+    response: RoleResponse,
+    role: str,
+    assignment: RoleAssignment,
+    context: dict[str, Any],
+    observation_start: int = 0,
+) -> RoleResponse:
+    """Fill minimal role_response fields from typed runtime state.
+
+    The LLM only has to emit status/message. The runtime already knows the
+    active role, assignment, recent ToolObservations, and artifact store, so it
+    enriches the response for orchestration/evaluation without making
+    role_response a tool.
+    """
+
+    observations = list(context.get("tool_observations") or [])[observation_start:]
+    inferred_types, inferred_refs = _artifact_refs_from_observations(observations)
+    fallback_types, fallback_refs = _artifact_refs_from_state(
+        role=role,
+        assignment=assignment,
+        context=context,
+    )
+    message = response.message or response.summary or response.status
+    summary = response.summary or response.message or response.status
+    produced_artifact_types = _unique_strings(
+        list(response.produced_artifact_types) + inferred_types + fallback_types
+    )
+    artifact_refs = _unique_strings(
+        list(response.artifact_refs) + inferred_refs + fallback_refs
+    )
+    findings = list(response.findings)
+    if role == "analysis_agent" and response.status == "done":
+        if findings and "findings" not in produced_artifact_types:
+            produced_artifact_types.append("findings")
+    return RoleResponse(
+        status=response.status,
+        role=response.role or role,
+        summary=summary,
+        message=message,
+        produced_artifact_types=produced_artifact_types,
+        artifact_refs=artifact_refs,
+        findings=findings,
+        needs=list(response.needs),
+    )
+
+
+def _artifact_refs_from_observations(
+    observations: list[dict[str, Any]],
+) -> tuple[list[str], list[str]]:
+    types: list[str] = []
+    refs: list[str] = []
+    for observation in observations:
+        if observation.get("status") != "ok":
+            continue
+        artifact_type = observation.get("produced_artifact_type")
+        if artifact_type:
+            types.append(str(artifact_type))
+        artifact_refs = observation.get("artifact_refs") or []
+        for artifact_ref in artifact_refs:
+            if artifact_ref:
+                refs.append(str(artifact_ref))
+        artifact_id = observation.get("artifact_id")
+        if artifact_id:
+            refs.append(str(artifact_id))
+    return _unique_strings(types), _unique_strings(refs)
+
+
+def _artifact_refs_from_state(
+    *,
+    role: str,
+    assignment: RoleAssignment,
+    context: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    available = build_typed_available_artifacts(context)
+    regions = set(assignment.scope.regions or [])
+    types: list[str] = []
+    refs: list[str] = []
+
+    if role == "data_agent":
+        for item in available.get("series") or []:
+            if regions and item.get("region_id") not in regions:
+                continue
+            if item.get("series_id"):
+                types.append("series_id")
+                refs.append(str(item["series_id"]))
+        return _unique_strings(types), _unique_strings(refs)
+
+    if role == "math_agent":
+        for item in available.get("stats") or []:
+            if regions and item.get("region_id") not in regions:
+                continue
+            if item.get("stats_id"):
+                types.append("stats_id")
+                refs.append(str(item["stats_id"]))
+        for item in available.get("thresholds") or []:
+            if regions and item.get("region_id") not in regions:
+                continue
+            if item.get("threshold_id"):
+                kind = str(item.get("kind") or "")
+                types.append(
+                    "stability_threshold_id"
+                    if kind == "stable_intervals"
+                    else "threshold_id"
+                )
+                refs.append(str(item["threshold_id"]))
+        for item in available.get("high_intervals") or []:
+            if regions and item.get("region_id") not in regions:
+                continue
+            types.append("high_intervals")
+            if item.get("threshold_id"):
+                refs.append(str(item["threshold_id"]))
+        for item in available.get("stable_intervals") or []:
+            if regions and item.get("region_id") not in regions:
+                continue
+            types.append("stable_intervals")
+            if item.get("threshold_id"):
+                refs.append(str(item["threshold_id"]))
+        for item in available.get("comparisons") or []:
+            if item.get("comparison_id"):
+                types.append("comparison_id")
+                refs.append(str(item["comparison_id"]))
+        return _unique_strings(types), _unique_strings(refs)
+
+    return [], []
+
+
+def _typed_repair_message_for_parse_error(
+    role: str,
+    parsed: TypedParseResult,
+) -> str:
+    error = parsed.error_message or "Invalid typed output."
+    if (
+        parsed.kind == "tool_call"
+        and parsed.error_code == "protocol_violation"
+        and "role_response" in error
+    ):
+        return build_typed_role_response_as_tool_repair_message()
+    return build_typed_role_output_repair_message(role, error)
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value is None:
+            continue
+        text = str(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
+
+
 def _merge_typed_role_response(context: dict[str, Any], response: RoleResponse) -> None:
     context.setdefault("typed_role_responses", []).append(response.to_dict())
     if response.role == "analysis_agent":
@@ -1031,4 +1199,5 @@ __all__ = [
     "build_typed_available_artifacts",
     "build_typed_state_packet",
     "compact_tool_result",
+    "enrich_typed_role_response",
 ]

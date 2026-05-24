@@ -36,6 +36,7 @@ Role dependency model:
 
 When deciding a handoff:
 - Inspect typed available_artifacts and previous role outputs.
+- If a role_response status is done, inspect available_artifacts and previous role outputs; do not rely on the role_response to repeat every handle.
 - Select a role whose input requirements appear satisfied, or a role that can produce the artifact type needed by the user request.
 - Create a structured RoleAssignment for that role.
 - Set expected_output_type and completion_criteria.
@@ -87,6 +88,16 @@ Typed protocol rules:
 - Role names must never appear as tool names.
 - Do not use evaluation-only plans, evaluator metrics, numerical oracle values, or deterministic traces.
 - You receive a RoleAssignment and a typed state packet.
+
+Never write this invalid block:
+<tool_call>
+{{"name":"role_response","arguments":{{}}}}
+</tool_call>
+
+When your role work is complete, write this minimal block:
+<role_response>
+{{"status":"done","message":"done"}}
+</role_response>
 """.strip()
 
     if role == "data_agent":
@@ -109,10 +120,11 @@ You must not:
 - invent artifacts.
 
 Completion:
-If requested series_id handles are already visible for the assignment scope, return role_response.
-If a tool observation shows the requested series_id handles are available, return role_response.
+If requested series_id handles are already visible for the assignment scope, return the minimal role_response block.
+If a tool observation shows the requested series_id handles are available, return the minimal role_response block.
 Do not keep calling tools after the assignment is complete.
 Do not call tec_series_profile repeatedly.
+Do not call tec_series_profile unless the assignment explicitly asks for profiling.
 
 Output only one of:
 <tool_call>
@@ -120,8 +132,10 @@ Output only one of:
 </tool_call>
 
 <role_response>
-{"status": "done", "role": "data_agent", "summary": "...", "produced_artifact_types": ["series_id"], "artifact_refs": ["series_..."], "findings": [], "needs": []}
+{"status":"done","message":"done"}
 </role_response>
+
+No prose outside the block. Do not include <tool_call> when returning role_response.
 """.strip(),
             ]
         )
@@ -148,13 +162,20 @@ You must not:
 
 Important:
 Only use artifact ids visible in available_artifacts or ToolObservation.
-If required handles are absent, return role_response with status cannot_complete and needs.
+If required handles are absent, return:
+<role_response>
+{{"status":"cannot_complete","message":"required artifact handles are not available"}}
+</role_response>
 Do not guess handles from region names.
 
 Completion:
-If relevant computed_artifacts are visible, return role_response with produced_artifact_types and artifact_refs.
+If relevant computed_artifacts are visible, return:
+<role_response>
+{{"status":"done","message":"done"}}
+</role_response>
 
 Output only one allowed <tool_call> or one <role_response>.
+No prose outside the block. Do not include <tool_call> when returning role_response.
 """.strip(),
             ]
         )
@@ -168,11 +189,16 @@ You are LLM AnalysisAgent.
 You do not call tools.
 Analyze available computed_artifacts and previous role outputs.
 Produce concise findings.
-If computed_artifacts are absent, return cannot_complete with needs.
+If computed_artifacts are absent, return the cannot_complete block below.
 
-Output exactly:
+If computed artifacts are available, output:
 <role_response>
-{"status": "done", "role": "analysis_agent", "summary": "...", "produced_artifact_types": ["findings"], "artifact_refs": [], "findings": ["..."], "needs": []}
+{"status":"done","message":"findings ready"}
+</role_response>
+
+If computed artifacts are not available, output:
+<role_response>
+{"status":"cannot_complete","message":"computed artifacts are not available"}
 </role_response>
 
 No tool_call. No final_answer. No role_action.
@@ -189,7 +215,7 @@ You are LLM ReportAgent.
 You do not call tools.
 Write the final answer based only on available artifacts and findings.
 Do not invent numbers.
-If information is insufficient, return role_response with status cannot_complete and needs.
+If information is insufficient, return the cannot_complete role_response below.
 
 Output only one of:
 <final_answer>
@@ -197,7 +223,7 @@ Output only one of:
 </final_answer>
 
 <role_response>
-{"status": "cannot_complete", "role": "report_agent", "summary": "...", "produced_artifact_types": [], "artifact_refs": [], "findings": [], "needs": [{"type": "computed_artifacts", "reason": "..."}]}
+{"status":"cannot_complete","message":"artifacts or findings are not available"}
 </role_response>
 
 No tool_call. No role_action.
@@ -275,7 +301,27 @@ Use valid JSON inside the required block. Do not include markdown or prose.
 """.strip()
 
 
+def build_typed_role_response_as_tool_repair_message() -> str:
+    return """
+Your previous output tried to call `role_response` as a tool. That is invalid.
+
+`role_response` is a protocol block, not a tool.
+
+Return exactly this block and nothing else:
+
+<role_response>
+{"status":"done","message":"done"}
+</role_response>
+
+Do not use `<tool_call>`.
+Do not add prose.
+Do not add explanations.
+""".strip()
+
+
 def build_typed_protocol_violation_message(role: str, error: str) -> str:
+    if "role_response" in error:
+        return build_typed_role_response_as_tool_repair_message()
     return f"""
 Protocol violation for {role}: {error}
 
@@ -343,5 +389,6 @@ __all__ = [
     "build_typed_role_prompt",
     "build_typed_role_state_message",
     "build_typed_protocol_violation_message",
+    "build_typed_role_response_as_tool_repair_message",
     "build_typed_duplicate_tool_message",
 ]
