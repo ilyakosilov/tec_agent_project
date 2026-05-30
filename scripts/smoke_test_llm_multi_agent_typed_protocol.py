@@ -16,10 +16,16 @@ if str(SRC_DIR) not in sys.path:
 
 
 from tec_agents.agents.llm_multi_agent_typed import (
+    build_assignment_progress,
     build_typed_state_packet,
+    count_tool_errors_from_trace,
+    count_tool_schema_validation_errors_from_trace,
     enrich_typed_role_response,
+    equivalent_role_assignment_key,
+    missing_required_output_artifact_types,
 )
 from tec_agents.agents.llm_multi_agent_typed_prompts import (
+    build_typed_tool_contract_catalogue,
     build_typed_orchestrator_prompt,
     build_typed_orchestrator_state_message,
     build_typed_role_response_as_tool_repair_message,
@@ -36,14 +42,17 @@ from tec_agents.agents.llm_multi_agent_typed_protocol import (
     parse_typed_role_output,
     parse_typed_role_response,
     tool_call_key,
+    tool_argument_contract,
 )
 
 
 FORBIDDEN_PROMPT_FRAGMENTS = [
     "expected_tool_sequence",
     "expected_role_agent_order",
+    "gold_result",
     "GoldRunner",
     "missing_goal_artifacts",
+    "missing goals",
     "remaining goals",
     "next tool",
     "next role",
@@ -75,6 +84,7 @@ def _assignment_json() -> str:
   },
   "available_input_types": [],
   "expected_output_type": "data_artifacts",
+  "required_output_artifact_types": ["series_id"],
   "completion_criteria": "Return role_response when handles are available.",
   "constraints": ["Use only DataAgent tools."]
 }
@@ -93,6 +103,7 @@ def test_role_action_schema() -> None:
     assert parsed.ok, parsed.to_dict()
     assert parsed.value.role == "data_agent"
     assert parsed.value.assignment.expected_output_type == "data_artifacts"
+    assert parsed.value.assignment.required_output_artifact_types == ["series_id"]
 
     missing_assignment = (
         '<role_action>{"action":"call_role","role":"data_agent","assignment":null,"reason":"bad"}</role_action>'
@@ -101,18 +112,24 @@ def test_role_action_schema() -> None:
     assert not parsed.ok
     assert parsed.error_code == "schema_error"
 
-    forbidden_field = (
-        "<role_action>"
-        '{"action":"call_role","role":"data_agent","assignment":'
-        '{"objective":"x","task_summary":"x","scope":{},"available_input_types":[],'
-        '"expected_output_type":"data_artifacts","completion_criteria":"x",'
-        '"expected_tool_sequence":["tec_get_timeseries"],"constraints":[]},'
-        '"reason":"bad"}'
-        "</role_action>"
-    )
-    parsed = parse_typed_role_action(forbidden_field)
-    assert not parsed.ok
-    assert parsed.error_code in {"schema_error", "forbidden_field"}
+    for forbidden_key in [
+        "expected_tool_sequence",
+        "expected_role_agent_order",
+        "gold_result",
+        "missing_goal_artifacts",
+    ]:
+        forbidden_field = (
+            "<role_action>"
+            '{"action":"call_role","role":"data_agent","assignment":'
+            '{"objective":"x","task_summary":"x","scope":{},"available_input_types":[],'
+            '"expected_output_type":"data_artifacts","required_output_artifact_types":[],"completion_criteria":"x",'
+            f'"{forbidden_key}":["bad"],"constraints":[]}},'
+            '"reason":"bad"}'
+            "</role_action>"
+        )
+        parsed = parse_typed_role_action(forbidden_field)
+        assert not parsed.ok
+        assert parsed.error_code in {"schema_error", "forbidden_field"}
 
     orchestrator_tool = '<tool_call>{"name":"tec_get_timeseries","arguments":{}}</tool_call>'
     parsed = parse_typed_role_output(orchestrator_tool, "orchestrator")
@@ -215,6 +232,26 @@ def test_tool_observation_and_duplicates() -> None:
     assert first != second
     assert first == duplicate
 
+    validation_obs = make_tool_observation(
+        tool_name="tec_compare_stats",
+        status="error",
+        error={
+            "error": {
+                "error_type": "validation_error",
+                "message": "stats_ids field required",
+                "tool_name": "tec_compare_stats",
+            }
+        },
+    )
+    assert validation_obs.error_type == "validation_error"
+    assert validation_obs.expected_argument_contract == tool_argument_contract(
+        "tec_compare_stats"
+    )
+    assert "stats_ids" in (validation_obs.error_summary or "")
+    rendered = str(validation_obs.to_dict())
+    for fragment in FORBIDDEN_PROMPT_FRAGMENTS:
+        assert fragment not in rendered, fragment
+
 
 def test_minimal_role_response_enrichment_and_repair() -> None:
     assignment = RoleAssignment(
@@ -229,6 +266,7 @@ def test_minimal_role_response_enrichment_and_repair() -> None:
         ),
         available_input_types=[],
         expected_output_type="data_artifacts",
+        required_output_artifact_types=["series_id"],
         completion_criteria="Return role_response when data handles are visible.",
         constraints=["Use only data tools."],
     )
@@ -264,6 +302,54 @@ def test_minimal_role_response_enrichment_and_repair() -> None:
     assert enriched.message == "done"
     assert "series_id" in enriched.produced_artifact_types
     assert "series_abc" in enriched.artifact_refs
+
+    premature_assignment = RoleAssignment(
+        objective="compute_high_intervals",
+        task_summary="Compute requested high TEC interval artifacts.",
+        scope=RoleScope(regions=["midlat_europe"]),
+        available_input_types=["series_id"],
+        expected_output_type="computed_artifacts",
+        required_output_artifact_types=["threshold_id", "high_intervals"],
+        completion_criteria="Return done only when required artifact types exist.",
+        constraints=["Use only math tools."],
+    )
+    premature_response = RoleResponse(
+        status="done",
+        message="done",
+        role="math_agent",
+        produced_artifact_types=["threshold_id"],
+    )
+    missing = missing_required_output_artifact_types(
+        response=premature_response,
+        assignment=premature_assignment,
+        context={},
+    )
+    assert missing == ["high_intervals"]
+
+    key_one = equivalent_role_assignment_key(
+        role="analysis_agent",
+        assignment=premature_assignment,
+        context=context,
+    )
+    key_two = equivalent_role_assignment_key(
+        role="analysis_agent",
+        assignment=premature_assignment,
+        context=context,
+    )
+    assert key_one == key_two
+
+    trace = {
+        "calls": [
+            {"tool_name": "tec_get_timeseries", "status": "ok"},
+            {
+                "tool_name": "tec_compare_stats",
+                "status": "error",
+                "error_type": "validation_error",
+            },
+        ]
+    }
+    assert count_tool_errors_from_trace(trace) == 1
+    assert count_tool_schema_validation_errors_from_trace(trace) == 1
 
     repair = build_typed_role_response_as_tool_repair_message()
     assert '<role_response>\n{"status":"done","message":"done"}\n</role_response>' in repair
@@ -302,6 +388,7 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
         ),
         available_input_types=[],
         expected_output_type="data_artifacts",
+        required_output_artifact_types=["series_id"],
         completion_criteria="Return role_response when data handles are visible.",
         constraints=["Use only data tools."],
     )
@@ -317,6 +404,9 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
         current_assignment=assignment,
         context=context,
     )
+    assert "assignment_progress" in packet
+    assert packet["assignment_progress"]["requested_regions"] == ["midlat_europe"]
+    assert packet["assignment_progress"]["scope_covered"] is False
     rendered = "\n".join(
         [
             build_typed_orchestrator_prompt(),
@@ -336,6 +426,35 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
     assert '<tool_call>\n{"name":"role_response","arguments":{}}\n</tool_call>' in rendered
     assert '<role_response>\n{"status":"done","message":"done"}\n</role_response>' in rendered
     assert "role_response is not a tool" in rendered
+    orchestrator_prompt = build_typed_orchestrator_prompt()
+    assert "MathAgent creates:" in orchestrator_prompt
+    assert "AnalysisAgent only interprets numerical artifacts" in orchestrator_prompt
+    assert "ReportAgent is the only role that produces final_answer" in orchestrator_prompt
+    assert "Calling AnalysisAgent to detect high TEC intervals" in orchestrator_prompt
+    assert "Repeatedly calling AnalysisAgent" in orchestrator_prompt
+
+    math_prompt = build_typed_role_prompt("math_agent")
+    assert "tec_compute_series_stats" in math_prompt
+    assert "one visible series_id" in math_prompt
+    assert "tec_compare_stats" in math_prompt
+    assert "stats_ids" in math_prompt
+    assert "never pass series_ids" in math_prompt
+    assert "A high TEC threshold is intermediate" in math_prompt
+    assert "required_output_artifact_types" in math_prompt
+
+    data_prompt = build_typed_role_prompt("data_agent")
+    assert "MULTI-REGION COMPLETION" in data_prompt
+    assert "every requested region has a visible series_id handle" in data_prompt
+
+    analysis_prompt = build_typed_role_prompt("analysis_agent")
+    assert "at least one non-empty finding" in analysis_prompt
+
+    report_prompt = build_typed_role_prompt("report_agent")
+    assert "only worker role that returns <final_answer>" in report_prompt
+
+    catalogue = build_typed_tool_contract_catalogue("math_agent")
+    assert '"series_id": "<one visible series_id>"' in catalogue
+    assert '"stats_ids": ["<visible stats_id>", "<visible stats_id>"]' in catalogue
 
 
 if __name__ == "__main__":

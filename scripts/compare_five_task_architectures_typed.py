@@ -35,13 +35,21 @@ SOURCE_CANDIDATES = {
         / "experiment_1"
         / "qwen_multi_agent_batch_colab.json",
     ],
-    "qwen_multi_typed": [
+    "typed_v1": [
         METRICS_DIR / "qwen_multi_agent_typed_batch_colab.json",
         METRICS_DIR
         / "real_runs"
         / "multi_agent"
         / "experiment_2"
         / "qwen_multi_agent_typed_batch_colab.json",
+    ],
+    "typed_v2": [
+        METRICS_DIR / "qwen_multi_agent_typed_v2_batch_colab.json",
+        METRICS_DIR
+        / "real_runs"
+        / "multi_agent"
+        / "experiment_3"
+        / "qwen_multi_agent_typed_v2_batch_colab.json",
     ],
 }
 
@@ -51,10 +59,15 @@ def main() -> None:
         name: _load_first(name, paths)
         for name, paths in SOURCE_CANDIDATES.items()
     }
-    if sources["qwen_multi_typed"] is None:
+    if sources["typed_v1"] is None:
         print(
-            "Typed Qwen multi-agent batch file not found. "
+            "Typed v1 Qwen multi-agent batch file not found. "
             "Run/export qwen_multi_agent_typed_batch_colab.json first."
+        )
+    if sources["typed_v2"] is None:
+        print(
+            "Typed v2 Qwen multi-agent batch file not found. "
+            "Run/export qwen_multi_agent_typed_v2_batch_colab.json first."
         )
 
     records_by_source = {
@@ -73,8 +86,15 @@ def main() -> None:
         single = records_by_source["qwen_single"].get(preset_id, {})
         rule = records_by_source["rule_multi"].get(preset_id, {})
         old = records_by_source["qwen_multi_old"].get(preset_id, {})
-        typed = records_by_source["qwen_multi_typed"].get(preset_id, {})
-        task_type = _task_type(single) or _task_type(rule) or _task_type(old) or _task_type(typed)
+        typed_v1 = records_by_source["typed_v1"].get(preset_id, {})
+        typed_v2 = records_by_source["typed_v2"].get(preset_id, {})
+        task_type = (
+            _task_type(single)
+            or _task_type(rule)
+            or _task_type(old)
+            or _task_type(typed_v1)
+            or _task_type(typed_v2)
+        )
         rows.append(
             {
                 "preset_id": preset_id,
@@ -86,23 +106,54 @@ def main() -> None:
                 "rule_multi_role_order_match": _metric(rule, "role_agent_order_match"),
                 "qwen_multi_old_success": _agent_success(old),
                 "qwen_multi_old_stalled": _agent_field(old, "stalled_loop_detected"),
-                "qwen_multi_typed_success": _agent_success(typed),
-                "qwen_multi_typed_stalled": _agent_field(typed, "stalled_loop_detected"),
-                "qwen_multi_typed_role_order": " -> ".join(
-                    str(item) for item in _agent_field(typed, "role_agent_order") or []
+                "typed_v1_success": _agent_success(typed_v1),
+                "typed_v1_stalled": _agent_field(typed_v1, "stalled_loop_detected"),
+                "typed_v1_role_order": " -> ".join(
+                    str(item) for item in _agent_field(typed_v1, "role_agent_order") or []
                 ),
-                "qwen_multi_typed_tool_sequence": " -> ".join(
-                    str(item) for item in _agent_field(typed, "actual_tool_sequence") or []
+                "typed_v1_tool_sequence": " -> ".join(
+                    str(item) for item in _agent_field(typed_v1, "actual_tool_sequence") or []
                 ),
-                "qwen_multi_typed_invalid_role_response_count": _agent_field(
-                    typed,
-                    "invalid_role_response_count",
+                "typed_v2_success": _agent_success(typed_v2),
+                "typed_v2_overall_ok": typed_v2.get("overall_ok"),
+                "typed_v2_tool_sequence_match": _metric(typed_v2, "tool_sequence_match"),
+                "typed_v2_final_answer_present": bool(
+                    (_agent_field(typed_v2, "answer") or typed_v2.get("final_answer_preview"))
                 ),
-                "qwen_multi_typed_forbidden_tool_call_count": _agent_field(
-                    typed,
-                    "forbidden_tool_call_count",
+                "typed_v2_role_order": " -> ".join(
+                    str(item) for item in _agent_field(typed_v2, "role_agent_order") or []
                 ),
-                "key_metric_summary": _key_metric_summary(str(task_type), single, rule, old, typed),
+                "typed_v2_tool_sequence": " -> ".join(
+                    str(item) for item in _agent_field(typed_v2, "actual_tool_sequence") or []
+                ),
+                "typed_v2_premature_role_completion_count": _agent_field(
+                    typed_v2,
+                    "premature_role_completion_count",
+                ),
+                "typed_v2_empty_findings_done_count": _agent_field(
+                    typed_v2,
+                    "empty_findings_done_count",
+                ),
+                "typed_v2_repeated_equivalent_role_assignment_count": _agent_field(
+                    typed_v2,
+                    "repeated_equivalent_role_assignment_count",
+                ),
+                "typed_v2_tool_schema_validation_error_count": _agent_field(
+                    typed_v2,
+                    "tool_schema_validation_error_count",
+                ),
+                "typed_v2_stalled_loop_detected": _agent_field(
+                    typed_v2,
+                    "stalled_loop_detected",
+                ),
+                "key_metric_summary": _key_metric_summary(
+                    str(task_type),
+                    single,
+                    rule,
+                    old,
+                    typed_v1,
+                    typed_v2,
+                ),
             }
         )
 
@@ -166,39 +217,44 @@ def _key_metric_summary(
     single: dict[str, Any],
     rule: dict[str, Any],
     old: dict[str, Any],
-    typed: dict[str, Any],
+    typed_v1: dict[str, Any],
+    typed_v2: dict[str, Any],
 ) -> str:
     if task_type == "high_tec":
         return (
-            "threshold_abs_error single/rule/old/typed="
+            "threshold_abs_error single/rule/old/typed_v1/typed_v2="
             f"{_metric(single, 'threshold_abs_error')}/"
             f"{_metric(rule, 'threshold_abs_error')}/"
             f"{_metric(old, 'threshold_abs_error')}/"
-            f"{_metric(typed, 'threshold_abs_error')}"
+            f"{_metric(typed_v1, 'threshold_abs_error')}/"
+            f"{_metric(typed_v2, 'threshold_abs_error')}"
         )
     if task_type == "stable_intervals":
         return (
-            "stable_interval_count_error single/rule/old/typed="
+            "stable_interval_count_error single/rule/old/typed_v1/typed_v2="
             f"{_metric(single, 'stable_interval_count_error')}/"
             f"{_metric(rule, 'stable_interval_count_error')}/"
             f"{_metric(old, 'stable_interval_count_error')}/"
-            f"{_metric(typed, 'stable_interval_count_error')}"
+            f"{_metric(typed_v1, 'stable_interval_count_error')}/"
+            f"{_metric(typed_v2, 'stable_interval_count_error')}"
         )
     if task_type == "compare_regions":
         return (
-            "mean_abs_error_avg single/rule/old/typed="
+            "mean_abs_error_avg single/rule/old/typed_v1/typed_v2="
             f"{_metric(single, 'mean_abs_error_avg')}/"
             f"{_metric(rule, 'mean_abs_error_avg')}/"
             f"{_metric(old, 'mean_abs_error_avg')}/"
-            f"{_metric(typed, 'mean_abs_error_avg')}"
+            f"{_metric(typed_v1, 'mean_abs_error_avg')}/"
+            f"{_metric(typed_v2, 'mean_abs_error_avg')}"
         )
     if task_type == "report":
         return (
-            "required_artifacts_present single/rule/old/typed="
+            "required_artifacts_present single/rule/old/typed_v1/typed_v2="
             f"{_metric(single, 'required_artifacts_present')}/"
             f"{_metric(rule, 'required_artifacts_present')}/"
             f"{_metric(old, 'required_artifacts_present')}/"
-            f"{_metric(typed, 'required_artifacts_present')}"
+            f"{_metric(typed_v1, 'required_artifacts_present')}/"
+            f"{_metric(typed_v2, 'required_artifacts_present')}"
         )
     return ""
 

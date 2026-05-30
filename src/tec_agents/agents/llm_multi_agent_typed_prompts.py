@@ -6,7 +6,10 @@ import json
 from typing import Any
 
 from tec_agents.agents.llm_single_agent import safe_compact_json
-from tec_agents.agents.llm_multi_agent_typed_protocol import ROLE_TOOL_ALLOWLIST
+from tec_agents.agents.llm_multi_agent_typed_protocol import (
+    ROLE_TOOL_ALLOWLIST,
+    tool_argument_contract,
+)
 from tec_agents.llm.prompts import BASE_DOMAIN_CONTEXT
 
 
@@ -34,12 +37,55 @@ Role dependency model:
 - analysis_agent requires computed_artifacts and produces findings.
 - report_agent requires artifacts and/or findings and produces final_answer.
 
+ROLE BOUNDARY: COMPUTATION VS INTERPRETATION
+
+MathAgent is the only role that creates numerical artifacts by calling TEC tools.
+
+MathAgent creates:
+- statistics artifacts;
+- threshold artifacts;
+- detected high TEC interval artifacts;
+- detected stable interval artifacts;
+- comparison artifacts.
+
+AnalysisAgent never creates numerical artifacts.
+AnalysisAgent never computes thresholds.
+AnalysisAgent never detects intervals.
+AnalysisAgent never computes comparisons.
+AnalysisAgent only interprets numerical artifacts that already exist in available_artifacts.
+
+ReportAgent never computes artifacts.
+ReportAgent writes the user-facing final answer from available artifacts and findings.
+
+WRONG ROLE ASSIGNMENTS:
+- Calling AnalysisAgent to detect high TEC intervals when no high_intervals artifact exists.
+- Calling AnalysisAgent to detect stable intervals when no stable_intervals artifact exists.
+- Calling AnalysisAgent to compute regional comparisons when no comparison artifact exists.
+- Calling ReportAgent before the required computed artifacts exist.
+- Repeatedly calling AnalysisAgent with the same objective after it returned done and no new artifact was produced.
+
+CORRECT RESPONSIBILITY RULE:
+- If a requested numerical artifact does not yet exist, assign a computation objective to MathAgent.
+- Assign AnalysisAgent only to interpret already existing computed artifacts.
+- Assign ReportAgent only to produce final_answer from existing artifacts and/or findings.
+
+WORKFLOW FINALIZATION
+
+ReportAgent is the only role that produces final_answer.
+When the numerical artifacts required to answer the user's request are available,
+and findings are already available or interpretation is not necessary,
+call ReportAgent with an assignment to produce final_answer.
+Do not repeatedly call AnalysisAgent after it already returned done unless new computed artifacts have appeared since its previous response.
+A workflow is not successfully complete merely because computations are finished.
+It is complete only when ReportAgent returns final_answer.
+
 When deciding a handoff:
 - Inspect typed available_artifacts and previous role outputs.
 - If a role_response status is done, inspect available_artifacts and previous role outputs; do not rely on the role_response to repeat every handle.
 - Select a role whose input requirements appear satisfied, or a role that can produce the artifact type needed by the user request.
 - Create a structured RoleAssignment for that role.
 - Set expected_output_type and completion_criteria.
+- Set required_output_artifact_types to the artifact types this role is being asked to produce before it may report status=done.
 - Do not specify exact tools.
 - Do not specify a future role order.
 - Do not use evaluation-only plans, evaluator metrics, numerical oracle values, or deterministic traces.
@@ -61,6 +107,7 @@ RoleAction schema:
     }},
     "available_input_types": [],
     "expected_output_type": "data_artifacts",
+    "required_output_artifact_types": ["series_id"],
     "completion_criteria": "Return role_response when data artifact handles for the assignment scope are available, or cannot_complete if blocked.",
     "constraints": ["Use only the role contract.", "Do not call other agents."]
   }},
@@ -101,16 +148,21 @@ When your role work is complete, write this minimal block:
 """.strip()
 
     if role == "data_agent":
+        data_catalogue = build_typed_tool_contract_catalogue("data_agent")
         return "\n\n".join(
             [
                 common,
-                """
+                f"""
 You are LLM DataAgent.
 Your responsibility is to prepare data_artifacts for the RoleAssignment scope.
 
 Allowed tools:
 - tec_get_timeseries
 - tec_series_profile, only if genuinely useful for data profiling.
+
+AVAILABLE DATA TOOLS AND EXACT ARGUMENT CONTRACTS
+
+{data_catalogue}
 
 You must not:
 - compute statistics, thresholds, intervals, or comparisons;
@@ -126,13 +178,26 @@ Do not keep calling tools after the assignment is complete.
 Do not call tec_series_profile repeatedly.
 Do not call tec_series_profile unless the assignment explicitly asks for profiling.
 
+MULTI-REGION COMPLETION
+
+An assignment may request data for more than one region.
+Inspect assignment.scope.regions and available_artifacts.series.
+Your data assignment is complete when every requested region has a visible series_id handle.
+When all requested regions are covered:
+- do not call any additional tool;
+- do not call role_response as a tool;
+- return exactly:
+<role_response>
+{{"status":"done","message":"done"}}
+</role_response>
+
 Output only one of:
 <tool_call>
-{"name": "tec_get_timeseries", "arguments": {"dataset_ref": "default", "region_id": "example_region", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}}
+{{"name": "tec_get_timeseries", "arguments": {{"dataset_ref": "default", "region_id": "example_region", "start": "YYYY-MM-DD", "end": "YYYY-MM-DD"}}}}
 </tool_call>
 
 <role_response>
-{"status":"done","message":"done"}
+{{"status":"done","message":"done"}}
 </role_response>
 
 No prose outside the block. Do not include <tool_call> when returning role_response.
@@ -142,6 +207,7 @@ No prose outside the block. Do not include <tool_call> when returning role_respo
 
     if role == "math_agent":
         allowed = ", ".join(sorted(ROLE_TOOL_ALLOWLIST["math_agent"]))
+        math_catalogue = build_typed_tool_contract_catalogue("math_agent")
         return "\n\n".join(
             [
                 common,
@@ -151,6 +217,10 @@ Your responsibility is to prepare computed_artifacts from visible artifact handl
 
 Allowed tools:
 - {allowed}
+
+AVAILABLE MATH TOOLS AND EXACT ARGUMENT CONTRACTS
+
+{math_catalogue}
 
 You must not:
 - load data;
@@ -167,6 +237,28 @@ If required handles are absent, return:
 {{"status":"cannot_complete","message":"required artifact handles are not available"}}
 </role_response>
 Do not guess handles from region names.
+Never invent artifact handles.
+Never derive a series_id or stats_id from a region name.
+Never guess argument names.
+If a tool validation error says an argument is wrong, correct the call using the displayed tool contract.
+
+WHEN YOU MAY RETURN DONE
+
+Your RoleAssignment contains required_output_artifact_types.
+You may return:
+<role_response>
+{{"status":"done","message":"done"}}
+</role_response>
+only when every artifact type listed in required_output_artifact_types is already visible in available_artifacts or has been produced by your successful tool calls in this assignment.
+Do not return done after producing only an intermediate artifact.
+
+Intermediate artifact examples:
+- A high TEC threshold is intermediate if the assignment requires high_intervals.
+- A stability threshold is intermediate if the assignment requires stable_intervals.
+- Per-region statistics are intermediate if the assignment requires comparison_id.
+
+One MathAgent assignment may require several sequential tool calls.
+Keep working within the same assignment until its required output artifact types are produced, or return cannot_complete if you cannot proceed using visible handles and allowed tools.
 
 Completion:
 If relevant computed_artifacts are visible, return:
@@ -187,13 +279,17 @@ No prose outside the block. Do not include <tool_call> when returning role_respo
                 """
 You are LLM AnalysisAgent.
 You do not call tools.
+You do not create numerical artifacts.
+You do not compute thresholds, detect intervals, or compute comparisons.
 Analyze available computed_artifacts and previous role outputs.
 Produce concise findings.
 If computed_artifacts are absent, return the cannot_complete block below.
+You may return status=done only when you include at least one non-empty finding grounded in visible computed artifacts.
+If the assignment asks you to create or detect a numerical artifact that does not already exist, do not pretend completion. Return cannot_complete and state that interpretation requires already computed artifacts.
 
 If computed artifacts are available, output:
 <role_response>
-{"status":"done","message":"findings ready"}
+{"status":"done","message":"findings ready","findings":["A visible computed artifact is available and can be interpreted."]}
 </role_response>
 
 If computed artifacts are not available, output:
@@ -213,6 +309,7 @@ No tool_call. No final_answer. No role_action.
                 """
 You are LLM ReportAgent.
 You do not call tools.
+You are the only worker role that returns <final_answer>.
 Write the final answer based only on available artifacts and findings.
 Do not invent numbers.
 If information is insufficient, return the cannot_complete role_response below.
@@ -351,6 +448,44 @@ def build_typed_duplicate_tool_message(
     )
 
 
+def build_typed_tool_contract_catalogue(role: str) -> str:
+    """Render compact exact tool argument contracts for one role."""
+
+    if role not in ROLE_TOOL_ALLOWLIST:
+        return ""
+    lines: list[str] = []
+    for tool_name in sorted(ROLE_TOOL_ALLOWLIST[role]):
+        contract = tool_argument_contract(tool_name) or {}
+        lines.append(tool_name)
+        lines.append(
+            f"- arguments: {json.dumps(contract, ensure_ascii=False, sort_keys=True)}"
+        )
+        if tool_name == "tec_compute_series_stats":
+            lines.append("- output artifact: stats_id")
+            lines.append("- call once per visible series_id; never pass a list under series_ids")
+        elif tool_name == "tec_compare_stats":
+            lines.append("- output artifact: comparison_id")
+            lines.append("- accepts stats_id handles, not series_id handles; never pass series_ids")
+        elif tool_name == "tec_compute_high_threshold":
+            lines.append("- output artifact: threshold_id")
+        elif tool_name == "tec_detect_high_intervals":
+            lines.append("- output artifact: high_intervals")
+            lines.append("- this is computation and belongs to MathAgent")
+        elif tool_name == "tec_compute_stability_thresholds":
+            lines.append("- output artifact: stability_threshold_id")
+        elif tool_name == "tec_detect_stable_intervals":
+            lines.append("- output artifact: stable_intervals")
+            lines.append("- this is computation and belongs to MathAgent")
+        elif tool_name == "tec_get_timeseries":
+            lines.append("- output artifact: series_id")
+            lines.append("- call once per requested region when a series_id is not already visible")
+        elif tool_name == "tec_series_profile":
+            lines.append("- output artifact: profile")
+            lines.append("- optional; do not call repeatedly")
+        lines.append("")
+    return "\n".join(lines).strip()
+
+
 def _safe_state_packet(packet: dict[str, Any]) -> dict[str, Any]:
     """Drop any evaluator-only keys if a caller accidentally supplied them."""
 
@@ -391,4 +526,5 @@ __all__ = [
     "build_typed_protocol_violation_message",
     "build_typed_role_response_as_tool_repair_message",
     "build_typed_duplicate_tool_message",
+    "build_typed_tool_contract_catalogue",
 ]

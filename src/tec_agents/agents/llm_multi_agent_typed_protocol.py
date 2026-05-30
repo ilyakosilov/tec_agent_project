@@ -97,6 +97,7 @@ class RoleAssignment:
     scope: RoleScope
     available_input_types: list[str]
     expected_output_type: str
+    required_output_artifact_types: list[str]
     completion_criteria: str
     constraints: list[str] = field(default_factory=list)
 
@@ -110,6 +111,10 @@ class RoleAssignment:
                 str(item) for item in (data.get("available_input_types") or [])
             ],
             expected_output_type=str(data.get("expected_output_type") or "other"),
+            required_output_artifact_types=[
+                str(item)
+                for item in (data.get("required_output_artifact_types") or [])
+            ],
             completion_criteria=str(data.get("completion_criteria") or ""),
             constraints=[str(item) for item in (data.get("constraints") or [])],
         )
@@ -169,6 +174,9 @@ class ToolObservation:
     summary: str = ""
     raw_result_compact: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
+    error_type: str | None = None
+    error_summary: str | None = None
+    expected_argument_contract: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -458,10 +466,15 @@ def make_tool_observation(
     """Build a compact typed ToolObservation from an existing tool result."""
 
     result = result or {}
+    error_payload = _tool_error_payload(error)
     artifact_type = artifact_type_for_tool(tool_name)
     artifact_id = artifact_id_from_result(tool_name, result)
     refs = [artifact_id] if artifact_id else []
     summary = _summary_for_tool(tool_name, result, status)
+    error_type = _nullable_str(error_payload.get("error_type"))
+    expected_contract = (
+        tool_argument_contract(tool_name) if status != "ok" else None
+    )
     return ToolObservation(
         tool_name=tool_name,
         status=status,
@@ -471,6 +484,13 @@ def make_tool_observation(
         summary=summary,
         raw_result_compact=compact_tool_result(tool_name, result) if result else None,
         error=error,
+        error_type=error_type,
+        error_summary=_tool_error_summary(
+            tool_name=tool_name,
+            error_type=error_type,
+            message=_nullable_str(error_payload.get("message")),
+        ),
+        expected_argument_contract=expected_contract,
     )
 
 
@@ -487,6 +507,59 @@ def artifact_type_for_tool(tool_name: str) -> str | None:
         "tec_detect_stable_intervals": "stable_intervals",
         "tec_compare_stats": "comparison_id",
     }.get(tool_name)
+
+
+def tool_argument_contract(tool_name: str) -> dict[str, Any] | None:
+    """Return compact prompt-safe argument contract for a TEC tool."""
+
+    contracts: dict[str, dict[str, Any]] = {
+        "tec_get_timeseries": {
+            "dataset_ref": "default",
+            "region_id": "<one region_id>",
+            "start": "<inclusive start datetime>",
+            "end": "<exclusive end datetime>",
+            "freq": "<optional pandas frequency or null>",
+        },
+        "tec_series_profile": {
+            "series_id": "<one visible series_id>",
+        },
+        "tec_compute_series_stats": {
+            "series_id": "<one visible series_id>",
+            "metrics": ["<optional metric names>"],
+        },
+        "tec_compare_stats": {
+            "stats_ids": ["<visible stats_id>", "<visible stats_id>"],
+            "reference_stats_id": "<optional visible stats_id or null>",
+            "metrics": ["<optional metric names>"],
+        },
+        "tec_compute_high_threshold": {
+            "series_id": "<one visible series_id>",
+            "method": "quantile",
+            "q": 0.9,
+            "value": None,
+        },
+        "tec_detect_high_intervals": {
+            "series_id": "<one visible series_id>",
+            "threshold_id": "<visible threshold_id>",
+            "min_duration_minutes": 0.0,
+            "merge_gap_minutes": 0.0,
+        },
+        "tec_compute_stability_thresholds": {
+            "series_id": "<one visible series_id>",
+            "window_minutes": 180,
+            "method": "quantile",
+            "q_delta": 0.6,
+            "q_std": 0.6,
+        },
+        "tec_detect_stable_intervals": {
+            "series_id": "<one visible series_id>",
+            "threshold_id": "<visible stability threshold_id>",
+            "min_duration_minutes": 180.0,
+            "merge_gap_minutes": 60.0,
+        },
+    }
+    contract = contracts.get(tool_name)
+    return dict(contract) if contract is not None else None
 
 
 def artifact_id_from_result(tool_name: str, result: dict[str, Any]) -> str | None:
@@ -672,6 +745,41 @@ def _summary_for_tool(tool_name: str, result: dict[str, Any], status: str) -> st
     return f"{tool_name} completed successfully."
 
 
+def _tool_error_payload(error: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(error, dict):
+        return {}
+    payload = error.get("error")
+    if isinstance(payload, dict):
+        return payload
+    return error
+
+
+def _tool_error_summary(
+    *,
+    tool_name: str,
+    error_type: str | None,
+    message: str | None,
+) -> str | None:
+    if not error_type:
+        return None
+    if error_type == "validation_error":
+        if tool_name == "tec_compare_stats":
+            return (
+                "Invalid arguments. This tool accepts stats_ids: list[str]. "
+                "It does not accept series_ids."
+            )
+        if tool_name == "tec_compute_series_stats":
+            return (
+                "Invalid arguments. This tool accepts exactly one series_id per call. "
+                "It does not accept series_ids."
+            )
+        contract = tool_argument_contract(tool_name)
+        if contract:
+            return f"Invalid arguments. Expected argument contract: {json.dumps(contract, ensure_ascii=False)}"
+        return "Invalid arguments for this tool."
+    return message or f"{tool_name} returned error_type={error_type}."
+
+
 __all__ = [
     "FORBIDDEN_PROMPT_KEYS",
     "FORBIDDEN_TOOL_NAMES",
@@ -698,6 +806,7 @@ __all__ = [
     "parse_typed_role_response",
     "parse_typed_tool_call",
     "tool_call_key",
+    "tool_argument_contract",
     "validate_role_action",
     "validate_role_assignment",
     "validate_role_response",

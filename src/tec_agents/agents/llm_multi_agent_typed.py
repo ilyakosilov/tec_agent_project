@@ -75,6 +75,10 @@ class LLMTypedRoleOutput:
     invalid_role_response_count: int = 0
     invalid_final_answer_count: int = 0
     repeated_tool_call_count: int = 0
+    premature_role_completion_count: int = 0
+    empty_findings_done_count: int = 0
+    tool_error_count: int = 0
+    tool_schema_validation_error_count: int = 0
     repair_attempt_count: int = 0
     stalled_loop_detected: bool = False
 
@@ -109,6 +113,11 @@ class LLMTypedMultiAgentResult:
     invalid_role_protocol_count: int
     forbidden_tool_call_count: int
     repeated_tool_call_count: int
+    premature_role_completion_count: int
+    empty_findings_done_count: int
+    repeated_equivalent_role_assignment_count: int
+    tool_error_count: int
+    tool_schema_validation_error_count: int
     stalled_loop_detected: bool
     repair_attempt_count: int
     retry_count: int
@@ -396,6 +405,10 @@ class LLMTypedRoleAgent:
                     observation.to_dict()
                 )
                 output.tool_observations.append(observation.to_dict())
+                if response.status != "ok":
+                    output.tool_error_count += 1
+                    if observation.error_type == "validation_error":
+                        output.tool_schema_validation_error_count += 1
 
                 if response.status == "ok" and response.result is not None:
                     successful_keys.add(key)
@@ -439,6 +452,20 @@ class LLMTypedRoleAgent:
                 output.findings = response.findings
                 output.needs = [need.to_dict() for need in response.needs]
                 role_step["enriched_role_response"] = response.to_dict()
+                missing_required = missing_required_output_artifact_types(
+                    response=response,
+                    assignment=assignment,
+                    context=context,
+                )
+                role_step["missing_required_output_artifact_types"] = missing_required
+                if response.status == "done" and missing_required:
+                    output.premature_role_completion_count += 1
+                if (
+                    self.role == "analysis_agent"
+                    and response.status == "done"
+                    and not _nonempty_strings(response.findings)
+                ):
+                    output.empty_findings_done_count += 1
                 output.role_steps.append(role_step)
                 _merge_typed_role_response(context, response)
                 return output
@@ -680,11 +707,27 @@ class LLMFullTypedMultiAgent:
                     error_message="Invalid typed role handoff.",
                 )
 
+            assignment_key = equivalent_role_assignment_key(
+                role=role,
+                assignment=assignment,
+                context=context,
+            )
+            seen_assignment_keys = context.setdefault(
+                "equivalent_role_assignment_keys",
+                set(),
+            )
+            repeated_equivalent_assignment = assignment_key in seen_assignment_keys
+            if repeated_equivalent_assignment:
+                counters["repeated_equivalent_role_assignment_count"] += 1
+            else:
+                seen_assignment_keys.add(assignment_key)
+
             context.setdefault("role_handoffs", []).append(
                 {
                     "step": orchestration_index,
                     "role": role,
                     "assignment": assignment.to_dict(),
+                    "repeated_equivalent_assignment": repeated_equivalent_assignment,
                 }
             )
             role_output = self.roles[role].run(
@@ -711,6 +754,8 @@ class LLMFullTypedMultiAgent:
                     "artifact_refs": role_output.artifact_refs,
                     "findings": role_output.findings,
                     "needs": role_output.needs,
+                    "premature_role_completion_count": role_output.premature_role_completion_count,
+                    "empty_findings_done_count": role_output.empty_findings_done_count,
                 }
             )
             available_artifacts_snapshots.append(
@@ -729,6 +774,7 @@ class LLMFullTypedMultiAgent:
                         "llm_driven": True,
                         "typed_protocol_version": TYPED_PROTOCOL_VERSION,
                         "assignment": assignment.to_dict(),
+                        "repeated_equivalent_assignment": repeated_equivalent_assignment,
                         "agent_response": {
                             "status": role_output.status,
                             "agent": role,
@@ -808,6 +854,10 @@ class LLMFullTypedMultiAgent:
         error_message: str | None,
     ) -> LLMTypedMultiAgentResult:
         trace = self.client.get_trace()
+        trace_tool_error_count = count_tool_errors_from_trace(trace)
+        trace_tool_schema_validation_error_count = (
+            count_tool_schema_validation_errors_from_trace(trace)
+        )
         return LLMTypedMultiAgentResult(
             answer=str(context.get("final_answer") or ""),
             parsed_task=parsed_task,
@@ -839,6 +889,13 @@ class LLMFullTypedMultiAgent:
             invalid_role_protocol_count=counters["invalid_role_protocol_count"],
             forbidden_tool_call_count=counters["forbidden_tool_call_count"],
             repeated_tool_call_count=counters["repeated_tool_call_count"],
+            premature_role_completion_count=counters["premature_role_completion_count"],
+            empty_findings_done_count=counters["empty_findings_done_count"],
+            repeated_equivalent_role_assignment_count=counters[
+                "repeated_equivalent_role_assignment_count"
+            ],
+            tool_error_count=trace_tool_error_count,
+            tool_schema_validation_error_count=trace_tool_schema_validation_error_count,
             stalled_loop_detected=stalled_loop_detected,
             repair_attempt_count=counters["repair_attempt_count"],
             retry_count=counters["retry_count"],
@@ -859,7 +916,7 @@ def build_typed_state_packet(
 ) -> dict[str, Any]:
     """Build compact role-visible typed state without evaluator hints."""
 
-    return {
+    packet = {
         "user_query": user_query,
         "current_role": current_role,
         "current_assignment": (
@@ -872,6 +929,13 @@ def build_typed_state_packet(
             context.get("completed_tool_calls") or []
         )[-10:],
     }
+    if current_assignment is not None:
+        packet["assignment_progress"] = build_assignment_progress(
+            current_role=current_role,
+            current_assignment=current_assignment,
+            context=context,
+        )
+    return packet
 
 
 def build_typed_available_artifacts(context: dict[str, Any]) -> dict[str, Any]:
@@ -942,6 +1006,48 @@ def build_typed_available_artifacts(context: dict[str, Any]) -> dict[str, Any]:
         "stable_intervals": stable_intervals,
         "comparisons": comparisons,
     }
+
+
+def build_assignment_progress(
+    *,
+    current_role: str,
+    current_assignment: RoleAssignment,
+    context: dict[str, Any],
+) -> dict[str, Any]:
+    """Return visible progress for the current assignment without evaluator hints."""
+
+    available = build_typed_available_artifacts(context)
+    required = list(current_assignment.required_output_artifact_types or [])
+    visible_required = [
+        artifact_type
+        for artifact_type in required
+        if artifact_type in _visible_artifact_type_set(context)
+    ]
+    progress: dict[str, Any] = {
+        "required_output_artifact_types": required,
+        "visible_required_output_artifact_types": visible_required,
+        "contract_satisfied": bool(required) and len(visible_required) == len(required),
+    }
+    if current_role == "data_agent":
+        requested_regions = list(current_assignment.scope.regions or [])
+        regions_with_series = [
+            str(item.get("region_id"))
+            for item in (available.get("series") or [])
+            if item.get("series_id")
+        ]
+        progress.update(
+            {
+                "requested_regions": requested_regions,
+                "regions_with_series": [
+                    region
+                    for region in requested_regions
+                    if region in set(regions_with_series)
+                ],
+                "scope_covered": bool(requested_regions)
+                and set(requested_regions).issubset(set(regions_with_series)),
+            }
+        )
+    return progress
 
 
 def enrich_typed_role_response(
@@ -1071,6 +1177,106 @@ def _artifact_refs_from_state(
     return [], []
 
 
+def missing_required_output_artifact_types(
+    *,
+    response: RoleResponse,
+    assignment: RoleAssignment,
+    context: dict[str, Any],
+) -> list[str]:
+    """Return required assignment artifact types not yet visible or produced."""
+
+    required = _unique_strings(list(assignment.required_output_artifact_types or []))
+    if not required:
+        return []
+    visible = _visible_artifact_type_set(context)
+    visible.update(response.produced_artifact_types or [])
+    if response.findings:
+        visible.add("findings")
+    if context.get("final_answer"):
+        visible.add("final_answer")
+    return [artifact_type for artifact_type in required if artifact_type not in visible]
+
+
+def equivalent_role_assignment_key(
+    *,
+    role: str,
+    assignment: RoleAssignment,
+    context: dict[str, Any],
+) -> str:
+    """Return a coarse key for repeated same-role assignments at unchanged state."""
+
+    objective = " ".join(str(assignment.objective or "").lower().split())
+    artifact_refs = _artifact_ref_signature(context)
+    return "|".join([role, objective, artifact_refs])
+
+
+def count_tool_errors_from_trace(trace: dict[str, Any]) -> int:
+    return sum(1 for call in trace.get("calls", []) if call.get("status") != "ok")
+
+
+def count_tool_schema_validation_errors_from_trace(trace: dict[str, Any]) -> int:
+    return sum(
+        1
+        for call in trace.get("calls", [])
+        if call.get("status") != "ok"
+        and call.get("error_type") == "validation_error"
+    )
+
+
+def _visible_artifact_type_set(context: dict[str, Any]) -> set[str]:
+    available = build_typed_available_artifacts(context)
+    visible: set[str] = set()
+    if available.get("series"):
+        visible.add("series_id")
+    if available.get("stats"):
+        visible.add("stats_id")
+    for threshold in available.get("thresholds") or []:
+        kind = str(threshold.get("kind") or "")
+        if kind == "stable_intervals":
+            visible.add("stability_threshold_id")
+        else:
+            visible.add("threshold_id")
+    if available.get("high_intervals"):
+        visible.add("high_intervals")
+    if available.get("stable_intervals"):
+        visible.add("stable_intervals")
+    if available.get("comparisons"):
+        visible.add("comparison_id")
+    if (context.get("analysis_artifacts") or {}).get("findings"):
+        visible.add("findings")
+    if context.get("final_answer"):
+        visible.add("final_answer")
+    return visible
+
+
+def _artifact_ref_signature(context: dict[str, Any]) -> str:
+    available = build_typed_available_artifacts(context)
+    refs: list[str] = []
+    for item in available.get("series") or []:
+        refs.append(f"series:{item.get('region_id')}:{item.get('series_id')}")
+    for item in available.get("stats") or []:
+        refs.append(f"stats:{item.get('region_id')}:{item.get('stats_id')}")
+    for item in available.get("thresholds") or []:
+        refs.append(
+            f"threshold:{item.get('kind')}:{item.get('region_id')}:{item.get('threshold_id')}"
+        )
+    for item in available.get("high_intervals") or []:
+        refs.append(
+            f"high:{item.get('region_id')}:{item.get('n_intervals')}:{item.get('threshold_id')}"
+        )
+    for item in available.get("stable_intervals") or []:
+        refs.append(
+            f"stable:{item.get('region_id')}:{item.get('n_intervals')}:{item.get('threshold_id')}"
+        )
+    for item in available.get("comparisons") or []:
+        refs.append(f"comparison:{item.get('comparison_id')}:{item.get('regions')}")
+    return ";".join(sorted(refs))
+
+
+def _nonempty_strings(values: list[Any]) -> list[str]:
+    return [str(value).strip() for value in values if str(value).strip()]
+
+
 def _typed_repair_message_for_parse_error(
     role: str,
     parsed: TypedParseResult,
@@ -1133,6 +1339,11 @@ def _empty_global_counters() -> dict[str, int]:
         "invalid_role_protocol_count": 0,
         "forbidden_tool_call_count": 0,
         "repeated_tool_call_count": 0,
+        "premature_role_completion_count": 0,
+        "empty_findings_done_count": 0,
+        "repeated_equivalent_role_assignment_count": 0,
+        "tool_error_count": 0,
+        "tool_schema_validation_error_count": 0,
         "repair_attempt_count": 0,
         "retry_count": 0,
         "recovery_attempt_count": 0,
@@ -1178,6 +1389,10 @@ def _accumulate_role(counters: dict[str, int], role_output: LLMTypedRoleOutput) 
         "invalid_role_response_count",
         "invalid_final_answer_count",
         "repeated_tool_call_count",
+        "premature_role_completion_count",
+        "empty_findings_done_count",
+        "tool_error_count",
+        "tool_schema_validation_error_count",
         "repair_attempt_count",
     ]:
         counters[key] += int(getattr(role_output, key))
@@ -1196,8 +1411,13 @@ __all__ = [
     "LLMTypedRoleOutput",
     "TYPED_PROTOCOL_VERSION",
     "ToolObservation",
+    "build_assignment_progress",
     "build_typed_available_artifacts",
     "build_typed_state_packet",
+    "count_tool_errors_from_trace",
+    "count_tool_schema_validation_errors_from_trace",
     "compact_tool_result",
+    "equivalent_role_assignment_key",
     "enrich_typed_role_response",
+    "missing_required_output_artifact_types",
 ]
