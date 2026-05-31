@@ -119,10 +119,23 @@ def compare_high_tec(
 
     errors: list[str] = []
     metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+    metrics.update(
+        _base_process_metrics(
+            task_type="high_tec",
+            agent_result=agent_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+    )
 
     try:
         agent_high = _extract_high_tec_payload(agent_result)
         gold_high = _extract_high_tec_payload(gold_result)
+        metrics["agent_terminal_artifact_present"] = True
+        metrics["missing_agent_terminal_artifact"] = None
+        metrics["numeric_comparison_available"] = True
 
         agent_threshold = agent_high["threshold"]
         agent_intervals = agent_high["intervals"]
@@ -237,10 +250,23 @@ def compare_region_comparison(
 
     errors: list[str] = []
     metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+    metrics.update(
+        _base_process_metrics(
+            task_type="compare_regions",
+            agent_result=agent_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+    )
 
     try:
         agent_comparison = _extract_comparison(agent_result)
         gold_comparison = gold_result["comparison"]
+        metrics["agent_terminal_artifact_present"] = True
+        metrics["missing_agent_terminal_artifact"] = None
+        metrics["numeric_comparison_available"] = True
 
         agent_stats = _comparison_stats_by_region(agent_result)
         gold_stats = _comparison_stats_by_region(gold_result)
@@ -359,10 +385,23 @@ def compare_stable_intervals(
 
     errors: list[str] = []
     metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+    metrics.update(
+        _base_process_metrics(
+            task_type="stable_intervals",
+            agent_result=agent_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+    )
 
     try:
         agent_stable = _extract_stable_payload(agent_result)
         gold_stable = _extract_stable_payload(gold_result)
+        metrics["agent_terminal_artifact_present"] = True
+        metrics["missing_agent_terminal_artifact"] = None
+        metrics["numeric_comparison_available"] = True
         agent_series = _extract_timeseries_payload(agent_result)
         gold_series = _extract_timeseries_payload(gold_result)
 
@@ -511,10 +550,23 @@ def compare_report(
 
     errors: list[str] = []
     metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+    metrics.update(
+        _base_process_metrics(
+            task_type="report",
+            agent_result=agent_result,
+            agent_trace=agent_trace,
+            task=task,
+            parsed_task=parsed_task,
+            orchestration_steps=orchestration_steps,
+        )
+    )
 
     try:
         agent_report = _extract_report_payload(agent_result)
         gold_report = _extract_report_payload(gold_result)
+        metrics["agent_terminal_artifact_present"] = bool(agent_report)
+        metrics["missing_agent_terminal_artifact"] = None if agent_report else "report"
+        metrics["numeric_comparison_available"] = bool(agent_report)
 
         metrics["report_present"] = bool(agent_report)
         metrics["final_answer_present"] = bool(
@@ -842,6 +894,64 @@ def _parse_metrics(
     return metrics
 
 
+def _base_process_metrics(
+    *,
+    task_type: str,
+    agent_result: dict[str, Any],
+    agent_trace: dict[str, Any] | None,
+    task: dict[str, Any] | None,
+    parsed_task: dict[str, Any] | None,
+    orchestration_steps: list[dict[str, Any]] | None,
+) -> dict[str, float | int | bool | str | list[str] | None]:
+    """Compute process/protocol metrics even when numeric artifacts are missing."""
+
+    metrics: dict[str, float | int | bool | str | list[str] | None] = {}
+    metrics["agent_terminal_artifact_present"] = False
+    metrics["missing_agent_terminal_artifact"] = _terminal_artifact_type(task_type)
+    metrics["numeric_comparison_available"] = False
+
+    metrics.update(
+        _parse_metrics(
+            task=task,
+            parsed_task=parsed_task,
+            agent_trace=agent_trace,
+        )
+    )
+    metrics.update(
+        _orchestration_metrics(
+            orchestration_steps=orchestration_steps,
+            task_type=task_type,
+            agent_result=agent_result,
+            parsed_task=parsed_task,
+        )
+    )
+    if agent_trace is not None:
+        metrics.update(_trace_metrics(agent_trace, task_type=task_type, task=task))
+
+    for key in [
+        "parse_error_count",
+        "invalid_json_count",
+        "invalid_role_protocol_count",
+        "forbidden_tool_call_count",
+        "repeated_tool_call_count",
+        "multiple_protocol_blocks_in_single_output_count",
+        "invalid_artifact_handle_count",
+        "stalled_loop_detected",
+    ]:
+        if key in agent_result:
+            metrics[key] = agent_result.get(key)
+    return metrics
+
+
+def _terminal_artifact_type(task_type: str) -> str:
+    return {
+        "high_tec": "high_intervals",
+        "stable_intervals": "stable_intervals",
+        "compare_regions": "comparison_id",
+        "report": "report",
+    }.get(task_type, "terminal_artifact")
+
+
 def _normalized_parsed_task(parsed_task: dict[str, Any]) -> dict[str, Any]:
     """Return parsed task fields from direct or LLMSingleAgent nested shape."""
 
@@ -1006,8 +1116,8 @@ def _orchestration_metrics(
         node in {"data_agent", "math_agent", "analysis_agent", "report_agent"}
         for node in nodes
     )
-    if selected_worker == "full_llm_multi_agent":
-        expected_worker = "full_llm_multi_agent"
+    if selected_worker in {"full_llm_multi_agent", "typed_full_llm_multi_agent"}:
+        expected_worker = selected_worker
     else:
         expected_worker = (
             "role_based_workflow"
@@ -1261,7 +1371,11 @@ def _route_correct(
     if selected_worker == "single_agent":
         return True
 
-    if selected_worker in {"role_based_workflow", "full_llm_multi_agent"}:
+    if selected_worker in {
+        "role_based_workflow",
+        "full_llm_multi_agent",
+        "typed_full_llm_multi_agent",
+    }:
         parsed_task_type = parsed_task.get("task_type") if parsed_task else task_type
         return parsed_task_type == task_type and role_agent_order_match is True
 

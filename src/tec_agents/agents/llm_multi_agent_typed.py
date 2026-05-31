@@ -21,6 +21,7 @@ from tec_agents.agents.llm_single_agent import infer_task_state
 from tec_agents.agents.llm_multi_agent_typed_prompts import (
     ARCHITECTURE_NAME,
     build_typed_duplicate_tool_message,
+    build_typed_invalid_artifact_handle_message,
     build_typed_orchestrator_prompt,
     build_typed_orchestrator_state_message,
     build_typed_protocol_violation_message,
@@ -39,8 +40,10 @@ from tec_agents.agents.llm_multi_agent_typed_protocol import (
     ToolObservation,
     TypedParseResult,
     TypedToolCall,
+    artifact_type_for_tool,
     clean_typed_output,
     compact_tool_result,
+    count_typed_protocol_blocks,
     make_tool_observation,
     parse_typed_role_output,
     tool_call_key,
@@ -75,6 +78,8 @@ class LLMTypedRoleOutput:
     invalid_role_response_count: int = 0
     invalid_final_answer_count: int = 0
     repeated_tool_call_count: int = 0
+    multiple_protocol_blocks_in_single_output_count: int = 0
+    invalid_artifact_handle_count: int = 0
     premature_role_completion_count: int = 0
     empty_findings_done_count: int = 0
     tool_error_count: int = 0
@@ -113,6 +118,8 @@ class LLMTypedMultiAgentResult:
     invalid_role_protocol_count: int
     forbidden_tool_call_count: int
     repeated_tool_call_count: int
+    multiple_protocol_blocks_in_single_output_count: int
+    invalid_artifact_handle_count: int
     premature_role_completion_count: int
     empty_findings_done_count: int
     repeated_equivalent_role_assignment_count: int
@@ -170,6 +177,9 @@ class LLMTypedOrchestratorAgent:
                 temperature=self.temperature,
                 do_sample=self.temperature > 0,
             )
+            block_count = count_typed_protocol_blocks(raw)
+            if block_count > 1:
+                diagnostics["multiple_protocol_blocks_in_single_output_count"] += 1
             cleaned = clean_typed_output(raw)
             diagnostics["raw_model_outputs"].append(raw)
             diagnostics["cleaned_model_outputs"].append(cleaned)
@@ -274,6 +284,13 @@ class LLMTypedRoleAgent:
                 temperature=self.temperature,
                 do_sample=self.temperature > 0,
             )
+            block_count = count_typed_protocol_blocks(raw)
+            if block_count > 1:
+                output.multiple_protocol_blocks_in_single_output_count += 1
+                context.setdefault("protocol_notices", {})[self.role] = (
+                    "Only the first protocol block from your previous response was executed. "
+                    "Review the updated runtime-visible artifacts before choosing exactly one next action."
+                )
             cleaned = clean_typed_output(raw)
             output.raw_model_outputs.append(raw)
             output.cleaned_model_outputs.append(cleaned)
@@ -342,6 +359,48 @@ class LLMTypedRoleAgent:
                             "content": build_typed_protocol_violation_message(
                                 self.role,
                                 f"Tool {tool_call.name!r} is not registered.",
+                            ),
+                        }
+                    )
+                    continue
+
+                handle_error = invalid_artifact_handle_error(
+                    tool_call=tool_call,
+                    context=context,
+                )
+                if handle_error:
+                    output.invalid_artifact_handle_count += 1
+                    output.tool_error_count += 1
+                    role_step["tool_status"] = "invalid_artifact_handle"
+                    role_step["error_message"] = handle_error
+                    observation = make_tool_observation(
+                        tool_name=tool_call.name,
+                        status="error",
+                        result={},
+                        error={
+                            "error": {
+                                "error_type": "invalid_artifact_handle",
+                                "message": handle_error,
+                                "tool_name": tool_call.name,
+                            }
+                        },
+                    )
+                    context.setdefault("tool_observations", []).append(
+                        observation.to_dict()
+                    )
+                    output.tool_observations.append(observation.to_dict())
+                    output.role_steps.append(role_step)
+                    output.repair_attempt_count += 1
+                    messages.append(
+                        {
+                            "role": "user",
+                            "content": build_typed_invalid_artifact_handle_message(
+                                state_packet=build_typed_state_packet(
+                                    user_query=user_query,
+                                    current_role=self.role,
+                                    current_assignment=assignment,
+                                    context=context,
+                                ),
                             ),
                         }
                     )
@@ -756,6 +815,8 @@ class LLMFullTypedMultiAgent:
                     "needs": role_output.needs,
                     "premature_role_completion_count": role_output.premature_role_completion_count,
                     "empty_findings_done_count": role_output.empty_findings_done_count,
+                    "multiple_protocol_blocks_in_single_output_count": role_output.multiple_protocol_blocks_in_single_output_count,
+                    "invalid_artifact_handle_count": role_output.invalid_artifact_handle_count,
                 }
             )
             available_artifacts_snapshots.append(
@@ -889,12 +950,17 @@ class LLMFullTypedMultiAgent:
             invalid_role_protocol_count=counters["invalid_role_protocol_count"],
             forbidden_tool_call_count=counters["forbidden_tool_call_count"],
             repeated_tool_call_count=counters["repeated_tool_call_count"],
+            multiple_protocol_blocks_in_single_output_count=counters[
+                "multiple_protocol_blocks_in_single_output_count"
+            ],
+            invalid_artifact_handle_count=counters["invalid_artifact_handle_count"],
             premature_role_completion_count=counters["premature_role_completion_count"],
             empty_findings_done_count=counters["empty_findings_done_count"],
             repeated_equivalent_role_assignment_count=counters[
                 "repeated_equivalent_role_assignment_count"
             ],
-            tool_error_count=trace_tool_error_count,
+            tool_error_count=trace_tool_error_count
+            + counters["invalid_artifact_handle_count"],
             tool_schema_validation_error_count=trace_tool_schema_validation_error_count,
             stalled_loop_detected=stalled_loop_detected,
             repair_attempt_count=counters["repair_attempt_count"],
@@ -920,15 +986,22 @@ def build_typed_state_packet(
         "user_query": user_query,
         "current_role": current_role,
         "current_assignment": (
-            current_assignment.to_dict() if current_assignment is not None else None
+            assignment_visible_to_role(current_assignment)
+            if current_assignment is not None
+            else None
         ),
+        "request_context": build_request_context(context),
+        "available_input_artifacts": build_available_input_artifacts(context),
         "available_artifacts": build_typed_available_artifacts(context),
-        "previous_role_outputs": list(context.get("role_outputs") or [])[-8:],
-        "recent_tool_observations": list(context.get("tool_observations") or [])[-6:],
+        "previous_role_outputs": list(context.get("role_outputs") or [])[-5:],
+        "recent_tool_observations": list(context.get("tool_observations") or [])[-4:],
         "completed_successful_tool_calls": list(
             context.get("completed_tool_calls") or []
-        )[-10:],
+        )[-6:],
     }
+    notice = (context.get("protocol_notices") or {}).get(current_role)
+    if notice:
+        packet["protocol_notice"] = notice
     if current_assignment is not None:
         packet["assignment_progress"] = build_assignment_progress(
             current_role=current_role,
@@ -1008,6 +1081,114 @@ def build_typed_available_artifacts(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def assignment_visible_to_role(assignment: RoleAssignment) -> dict[str, Any]:
+    """Return assignment fields visible to workers without hallucinated inputs."""
+
+    data = assignment.to_dict()
+    data.pop("available_input_types", None)
+    if not data.get("deliverables_to_produce"):
+        data["deliverables_to_produce"] = list(
+            data.get("required_output_artifact_types") or []
+        )
+    data.pop("required_output_artifact_types", None)
+    return data
+
+
+def build_request_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Return runtime-stable request context derived from the user query parser."""
+
+    parsed = context.get("parsed_task") or {}
+    regions = list(parsed.get("region_ids") or parsed.get("regions") or [])
+    if not regions and parsed.get("region_id"):
+        regions = [str(parsed.get("region_id"))]
+    parameters: dict[str, Any] = {}
+    if parsed.get("q") is not None:
+        parameters["q"] = parsed.get("q")
+    task_type = parsed.get("task_type")
+    request_context: dict[str, Any] = {
+        "task_type": task_type,
+        "dataset_ref": parsed.get("dataset_ref") or "default",
+        "regions": regions,
+        "start": parsed.get("start"),
+        "end": parsed.get("end"),
+        "parameters": parameters,
+    }
+    if task_type == "report":
+        request_context["requested_sections"] = [
+            "basic_stats",
+            "high_tec",
+            "stable_intervals",
+        ]
+    return request_context
+
+
+def build_available_input_artifacts(context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Return runtime-grounded input handles grouped by artifact handle type."""
+
+    available = build_typed_available_artifacts(context)
+    inputs: dict[str, list[dict[str, Any]]] = {
+        "series_id": [],
+        "stats_id": [],
+        "threshold_id": [],
+        "stability_threshold_id": [],
+        "high_intervals": [],
+        "stable_intervals": [],
+        "comparison_id": [],
+    }
+    for item in available.get("series") or []:
+        if item.get("series_id"):
+            inputs["series_id"].append(
+                {
+                    "region_id": item.get("region_id"),
+                    "artifact_id": item.get("series_id"),
+                    "n_points": item.get("n_points"),
+                }
+            )
+    for item in available.get("stats") or []:
+        if item.get("stats_id"):
+            inputs["stats_id"].append(
+                {"region_id": item.get("region_id"), "artifact_id": item.get("stats_id")}
+            )
+    for item in available.get("thresholds") or []:
+        artifact_id = item.get("threshold_id")
+        if not artifact_id:
+            continue
+        kind = str(item.get("kind") or "")
+        key = "stability_threshold_id" if kind == "stable_intervals" else "threshold_id"
+        inputs[key].append(
+            {
+                "region_id": item.get("region_id"),
+                "artifact_id": artifact_id,
+                "kind": kind,
+            }
+        )
+    for item in available.get("high_intervals") or []:
+        inputs["high_intervals"].append(
+            {
+                "region_id": item.get("region_id"),
+                "artifact_id": item.get("threshold_id"),
+                "n_intervals": item.get("n_intervals"),
+            }
+        )
+    for item in available.get("stable_intervals") or []:
+        inputs["stable_intervals"].append(
+            {
+                "region_id": item.get("region_id"),
+                "artifact_id": item.get("threshold_id"),
+                "n_intervals": item.get("n_intervals"),
+            }
+        )
+    for item in available.get("comparisons") or []:
+        if item.get("comparison_id"):
+            inputs["comparison_id"].append(
+                {
+                    "artifact_id": item.get("comparison_id"),
+                    "regions": item.get("regions"),
+                }
+            )
+    return inputs
+
+
 def build_assignment_progress(
     *,
     current_role: str,
@@ -1017,15 +1198,15 @@ def build_assignment_progress(
     """Return visible progress for the current assignment without evaluator hints."""
 
     available = build_typed_available_artifacts(context)
-    required = list(current_assignment.required_output_artifact_types or [])
+    required = assignment_deliverables(current_assignment)
     visible_required = [
         artifact_type
         for artifact_type in required
         if artifact_type in _visible_artifact_type_set(context)
     ]
     progress: dict[str, Any] = {
-        "required_output_artifact_types": required,
-        "visible_required_output_artifact_types": visible_required,
+        "deliverables_to_produce": required,
+        "visible_deliverables_to_produce": visible_required,
         "contract_satisfied": bool(required) and len(visible_required) == len(required),
     }
     if current_role == "data_agent":
@@ -1185,7 +1366,7 @@ def missing_required_output_artifact_types(
 ) -> list[str]:
     """Return required assignment artifact types not yet visible or produced."""
 
-    required = _unique_strings(list(assignment.required_output_artifact_types or []))
+    required = assignment_deliverables(assignment)
     if not required:
         return []
     visible = _visible_artifact_type_set(context)
@@ -1206,8 +1387,15 @@ def equivalent_role_assignment_key(
     """Return a coarse key for repeated same-role assignments at unchanged state."""
 
     objective = " ".join(str(assignment.objective or "").lower().split())
+    deliverables = ",".join(assignment_deliverables(assignment))
     artifact_refs = _artifact_ref_signature(context)
-    return "|".join([role, objective, artifact_refs])
+    return "|".join([role, objective, deliverables, artifact_refs])
+
+
+def assignment_deliverables(assignment: RoleAssignment) -> list[str]:
+    return _unique_strings(
+        list(assignment.deliverables_to_produce or assignment.required_output_artifact_types or [])
+    )
 
 
 def count_tool_errors_from_trace(trace: dict[str, Any]) -> int:
@@ -1221,6 +1409,76 @@ def count_tool_schema_validation_errors_from_trace(trace: dict[str, Any]) -> int
         if call.get("status") != "ok"
         and call.get("error_type") == "validation_error"
     )
+
+
+def invalid_artifact_handle_error(
+    *,
+    tool_call: TypedToolCall,
+    context: dict[str, Any],
+) -> str | None:
+    """Return an error if a handle-like argument is not runtime-visible."""
+
+    visible = visible_artifact_handles(context)
+    handle_fields = {
+        "series_id": "series_id",
+        "stats_id": "stats_id",
+        "threshold_id": "threshold_id",
+        "comparison_id": "comparison_id",
+    }
+    for argument_name, artifact_type in handle_fields.items():
+        if argument_name not in tool_call.arguments:
+            continue
+        value = tool_call.arguments.get(argument_name)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            if item is None:
+                continue
+            text = str(item)
+            if text and text not in visible.get(artifact_type, set()):
+                return (
+                    f"{argument_name}={text!r} is not present in runtime-visible "
+                    f"{artifact_type} handles."
+                )
+
+    stats_ids = tool_call.arguments.get("stats_ids")
+    if isinstance(stats_ids, list):
+        for item in stats_ids:
+            text = str(item)
+            if text and text not in visible.get("stats_id", set()):
+                return (
+                    f"stats_ids contains {text!r}, which is not present in "
+                    "runtime-visible stats_id handles."
+                )
+    reference_stats_id = tool_call.arguments.get("reference_stats_id")
+    if reference_stats_id is not None:
+        text = str(reference_stats_id)
+        if text and text not in visible.get("stats_id", set()):
+            return (
+                f"reference_stats_id={text!r} is not present in runtime-visible "
+                "stats_id handles."
+            )
+    return None
+
+
+def visible_artifact_handles(context: dict[str, Any]) -> dict[str, set[str]]:
+    inputs = build_available_input_artifacts(context)
+    handles: dict[str, set[str]] = {
+        "series_id": set(),
+        "stats_id": set(),
+        "threshold_id": set(),
+        "comparison_id": set(),
+    }
+    for artifact_type, items in inputs.items():
+        if artifact_type in {"high_intervals", "stable_intervals"}:
+            continue
+        canonical = "threshold_id" if artifact_type == "stability_threshold_id" else artifact_type
+        if canonical not in handles:
+            continue
+        for item in items:
+            artifact_id = item.get("artifact_id") if isinstance(item, dict) else item
+            if artifact_id:
+                handles[canonical].add(str(artifact_id))
+    return handles
 
 
 def _visible_artifact_type_set(context: dict[str, Any]) -> set[str]:
@@ -1322,6 +1580,7 @@ def _empty_orchestrator_diagnostics() -> dict[str, Any]:
         "unknown_format_count": 0,
         "invalid_assignment_count": 0,
         "invalid_role_action_count": 0,
+        "multiple_protocol_blocks_in_single_output_count": 0,
         "repair_attempt_count": 0,
     }
 
@@ -1339,6 +1598,8 @@ def _empty_global_counters() -> dict[str, int]:
         "invalid_role_protocol_count": 0,
         "forbidden_tool_call_count": 0,
         "repeated_tool_call_count": 0,
+        "multiple_protocol_blocks_in_single_output_count": 0,
+        "invalid_artifact_handle_count": 0,
         "premature_role_completion_count": 0,
         "empty_findings_done_count": 0,
         "repeated_equivalent_role_assignment_count": 0,
@@ -1373,6 +1634,7 @@ def _accumulate_orchestrator(
         "unknown_format_count",
         "invalid_assignment_count",
         "invalid_role_action_count",
+        "multiple_protocol_blocks_in_single_output_count",
         "repair_attempt_count",
     ]:
         counters[key] += int(diagnostics.get(key) or 0)
@@ -1389,6 +1651,8 @@ def _accumulate_role(counters: dict[str, int], role_output: LLMTypedRoleOutput) 
         "invalid_role_response_count",
         "invalid_final_answer_count",
         "repeated_tool_call_count",
+        "multiple_protocol_blocks_in_single_output_count",
+        "invalid_artifact_handle_count",
         "premature_role_completion_count",
         "empty_findings_done_count",
         "tool_error_count",
@@ -1412,6 +1676,8 @@ __all__ = [
     "TYPED_PROTOCOL_VERSION",
     "ToolObservation",
     "build_assignment_progress",
+    "build_available_input_artifacts",
+    "build_request_context",
     "build_typed_available_artifacts",
     "build_typed_state_packet",
     "count_tool_errors_from_trace",
@@ -1419,5 +1685,7 @@ __all__ = [
     "compact_tool_result",
     "equivalent_role_assignment_key",
     "enrich_typed_role_response",
+    "invalid_artifact_handle_error",
     "missing_required_output_artifact_types",
+    "visible_artifact_handles",
 ]

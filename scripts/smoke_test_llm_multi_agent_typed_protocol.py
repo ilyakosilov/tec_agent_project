@@ -17,11 +17,14 @@ if str(SRC_DIR) not in sys.path:
 
 from tec_agents.agents.llm_multi_agent_typed import (
     build_assignment_progress,
+    build_available_input_artifacts,
+    build_request_context,
     build_typed_state_packet,
     count_tool_errors_from_trace,
     count_tool_schema_validation_errors_from_trace,
     enrich_typed_role_response,
     equivalent_role_assignment_key,
+    invalid_artifact_handle_error,
     missing_required_output_artifact_types,
 )
 from tec_agents.agents.llm_multi_agent_typed_prompts import (
@@ -37,6 +40,7 @@ from tec_agents.agents.llm_multi_agent_typed_protocol import (
     RoleResponse,
     RoleScope,
     clean_typed_output,
+    count_typed_protocol_blocks,
     make_tool_observation,
     parse_typed_role_action,
     parse_typed_role_output,
@@ -66,6 +70,7 @@ def main() -> None:
     test_tool_observation_and_duplicates()
     test_minimal_role_response_enrichment_and_repair()
     test_output_cleaner_removes_chat_template_noise()
+    test_grounded_inputs_deliverables_and_new_counters()
     test_prompts_and_state_packets_hide_forbidden_hints()
     print("Typed LLM multi-agent protocol smoke test finished successfully.")
 
@@ -82,7 +87,7 @@ def _assignment_json() -> str:
     "end": "2024-04-01",
     "task_intent": "high_tec"
   },
-  "available_input_types": [],
+  "deliverables_to_produce": ["series_id"],
   "expected_output_type": "data_artifacts",
   "required_output_artifact_types": ["series_id"],
   "completion_criteria": "Return role_response when handles are available.",
@@ -103,6 +108,7 @@ def test_role_action_schema() -> None:
     assert parsed.ok, parsed.to_dict()
     assert parsed.value.role == "data_agent"
     assert parsed.value.assignment.expected_output_type == "data_artifacts"
+    assert parsed.value.assignment.deliverables_to_produce == ["series_id"]
     assert parsed.value.assignment.required_output_artifact_types == ["series_id"]
 
     missing_assignment = (
@@ -265,6 +271,7 @@ def test_minimal_role_response_enrichment_and_repair() -> None:
             task_intent="high_tec",
         ),
         available_input_types=[],
+        deliverables_to_produce=["series_id"],
         expected_output_type="data_artifacts",
         required_output_artifact_types=["series_id"],
         completion_criteria="Return role_response when data handles are visible.",
@@ -308,6 +315,7 @@ def test_minimal_role_response_enrichment_and_repair() -> None:
         task_summary="Compute requested high TEC interval artifacts.",
         scope=RoleScope(regions=["midlat_europe"]),
         available_input_types=["series_id"],
+        deliverables_to_produce=["threshold_id", "high_intervals"],
         expected_output_type="computed_artifacts",
         required_output_artifact_types=["threshold_id", "high_intervals"],
         completion_criteria="Return done only when required artifact types exist.",
@@ -373,6 +381,104 @@ extra text
 """
     cleaned = clean_typed_output(raw)
     assert cleaned == '<role_response>\n{"status":"done","message":"done"}\n</role_response>'
+    multi = (
+        '<tool_call>{"name":"tec_get_timeseries","arguments":{"region_id":"a"}}</tool_call>'
+        '<tool_call>{"name":"tec_get_timeseries","arguments":{"region_id":"b"}}</tool_call>'
+    )
+    assert count_typed_protocol_blocks(multi) == 2
+    assert clean_typed_output(multi).count("<tool_call>") == 1
+
+
+def test_grounded_inputs_deliverables_and_new_counters() -> None:
+    assignment = RoleAssignment(
+        objective="prepare_data_artifacts",
+        task_summary="Prepare data.",
+        scope=RoleScope(
+            dataset_ref="default",
+            regions=["equatorial_atlantic", "midlat_europe", "highlat_north"],
+            start="2024-03-01",
+            end="2024-04-01",
+            task_intent="compare_regions",
+        ),
+        available_input_types=["series_id"],
+        deliverables_to_produce=["series_id"],
+        expected_output_type="data_artifacts",
+        required_output_artifact_types=["series_id"],
+        completion_criteria="Return done when scoped data handles are visible.",
+        constraints=["Use only data tools."],
+    )
+    context = {
+        "parsed_task": {
+            "task_type": "compare_regions",
+            "dataset_ref": "default",
+            "region_ids": ["equatorial_atlantic", "midlat_europe", "highlat_north"],
+            "start": "2024-03-01",
+            "end": "2024-04-01",
+        },
+        "data_artifacts": {
+            "series_by_region": {
+                "equatorial_atlantic": {"series_id": "series_a", "metadata": {"n_points": 744}},
+                "midlat_europe": {"series_id": "series_b", "metadata": {"n_points": 744}},
+                "highlat_north": {"series_id": "series_c", "metadata": {"n_points": 744}},
+            }
+        },
+        "math_artifacts": {},
+        "analysis_artifacts": {"findings": []},
+        "role_outputs": [],
+        "tool_observations": [],
+        "completed_tool_calls": [],
+    }
+    packet = build_typed_state_packet(
+        user_query="Compare TEC statistics.",
+        current_role="data_agent",
+        current_assignment=assignment,
+        context=context,
+    )
+    assert "available_input_artifacts" in packet
+    assert len(packet["available_input_artifacts"]["series_id"]) == 3
+    assert "available_input_types" not in packet["current_assignment"]
+    assert packet["current_assignment"]["deliverables_to_produce"] == ["series_id"]
+    assert packet["request_context"]["task_type"] == "compare_regions"
+    assert packet["assignment_progress"]["scope_covered"] is True
+    state_text = build_typed_role_state_message(role="data_agent", state_packet=packet)
+    assert "scope_covered: true" in state_text
+    assert '<role_response>{"status":"done","message":"done"}</role_response>' in state_text
+
+    empty_context = {
+        "parsed_task": context["parsed_task"],
+        "data_artifacts": {"series_by_region": {}},
+        "math_artifacts": {},
+        "analysis_artifacts": {"findings": []},
+    }
+    empty_packet = build_typed_state_packet(
+        user_query="Compare TEC statistics.",
+        current_role="math_agent",
+        current_assignment=assignment,
+        context=empty_context,
+    )
+    assert empty_packet["available_input_artifacts"]["series_id"] == []
+
+    from tec_agents.agents.llm_multi_agent_typed_protocol import TypedToolCall
+
+    invented = TypedToolCall(
+        name="tec_compute_series_stats",
+        arguments={"series_id": "midlat_europe_20240301_20240401"},
+    )
+    error = invalid_artifact_handle_error(tool_call=invented, context=empty_context)
+    assert error and "runtime-visible" in error
+    feedback = str(error)
+    for fragment in FORBIDDEN_PROMPT_FRAGMENTS:
+        assert fragment not in feedback, fragment
+
+    trace = {
+        "calls": [
+            {"tool_name": "tec_get_timeseries", "status": "ok"},
+            {"tool_name": "tec_compute_series_stats", "status": "error"},
+        ]
+    }
+    assert count_tool_errors_from_trace(trace) == 1
+    assert build_request_context(context)["task_type"] == "compare_regions"
+    assert build_available_input_artifacts(context)["series_id"][0]["artifact_id"] == "series_a"
 
 
 def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
@@ -387,6 +493,7 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
             task_intent="high_tec",
         ),
         available_input_types=[],
+        deliverables_to_produce=["series_id"],
         expected_output_type="data_artifacts",
         required_output_artifact_types=["series_id"],
         completion_criteria="Return role_response when data handles are visible.",
@@ -426,12 +533,16 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
     assert '<tool_call>\n{"name":"role_response","arguments":{}}\n</tool_call>' in rendered
     assert '<role_response>\n{"status":"done","message":"done"}\n</role_response>' in rendered
     assert "role_response is not a tool" in rendered
+    assert "available_input_artifacts" in rendered
     orchestrator_prompt = build_typed_orchestrator_prompt()
     assert "MathAgent creates:" in orchestrator_prompt
     assert "AnalysisAgent only interprets numerical artifacts" in orchestrator_prompt
     assert "ReportAgent is the only role that produces final_answer" in orchestrator_prompt
     assert "Calling AnalysisAgent to detect high TEC intervals" in orchestrator_prompt
     assert "Repeatedly calling AnalysisAgent" in orchestrator_prompt
+    assert "MINIMAL SUFFICIENT DELIVERABLES" in orchestrator_prompt
+    assert "Do not request basic statistics for a high-interval detection request" in orchestrator_prompt
+    assert "available_input_types" not in orchestrator_prompt
 
     math_prompt = build_typed_role_prompt("math_agent")
     assert "tec_compute_series_stats" in math_prompt
@@ -440,7 +551,9 @@ def test_prompts_and_state_packets_hide_forbidden_hints() -> None:
     assert "stats_ids" in math_prompt
     assert "never pass series_ids" in math_prompt
     assert "A high TEC threshold is intermediate" in math_prompt
-    assert "required_output_artifact_types" in math_prompt
+    assert "Deliverables are outputs you must produce" in math_prompt
+    assert "Available input handles are listed only in runtime_available_input_artifacts" in math_prompt
+    assert "deliverables_to_produce" in math_prompt
 
     data_prompt = build_typed_role_prompt("data_agent")
     assert "MULTI-REGION COMPLETION" in data_prompt

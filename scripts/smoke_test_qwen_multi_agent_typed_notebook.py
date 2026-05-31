@@ -50,11 +50,13 @@ def main() -> None:
     assert "get_five_task_configs" in all_text
     assert "LLMFullTypedMultiAgent" in all_text
     assert "ARCHITECTURE_MODE = \"qwen_multi_agent_typed_full_llm\"" in all_text
-    assert "PROMPT_REVISION = \"role_boundaries_tool_schemas_v2\"" in all_text
-    assert "qwen_multi_agent_typed_v2_batch_colab.json" in all_text
-    assert "qwen_multi_agent_typed_v2_{preset_id}_colab.json" in all_text
+    assert "PROMPT_REVISION = \"grounded_inputs_deliverables_single_block_v3\"" in all_text
+    assert "EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / \"experiment_4\"" in all_text
+    assert "qwen_multi_agent_typed_v3_batch_colab.json" in all_text
+    assert "qwen_multi_agent_typed_v3_{preset_id}_colab.json" in all_text
     assert "typed_v1_minimal_role_response" in all_text
     assert "typed_v2_role_boundaries_tool_schemas" in all_text
+    assert "typed_v3_grounded_inputs_deliverables_single_block" in all_text
     assert "qwen_multi_agent_batch_colab.json" in all_text
     assert "## Planned test questions" in all_text
     assert "GoldRunner" in all_text
@@ -103,10 +105,19 @@ def main() -> None:
     forbidden_output_assignments = [
         'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_batch_colab.json"',
         'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_typed_batch_colab.json"',
+        'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_typed_v2_batch_colab.json"',
         'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_typed_{preset_id}_colab.json"',
+        'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_typed_v2_{preset_id}_colab.json"',
     ]
     for assignment in forbidden_output_assignments:
         assert assignment not in all_text
+
+    for column in [
+        "invalid_artifact_handle_count",
+        "multiple_protocol_blocks_in_single_output_count",
+        "missing_agent_terminal_artifact",
+    ]:
+        assert column in all_text
 
     print("Qwen typed multi-agent notebook smoke test finished successfully.")
 

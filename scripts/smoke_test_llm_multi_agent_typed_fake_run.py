@@ -21,6 +21,9 @@ if str(SRC_DIR) not in sys.path:
 
 
 from tec_agents.agents.llm_multi_agent_typed import LLMFullTypedMultiAgent
+from tec_agents.agents.llm_multi_agent_typed import build_typed_state_packet
+from tec_agents.agents.llm_multi_agent_typed import invalid_artifact_handle_error
+from tec_agents.agents.llm_multi_agent_typed_protocol import RoleAssignment, RoleScope, TypedToolCall
 from tec_agents.data.datasets import register_dataset
 from tec_agents.mcp.client import LocalMCPClient
 from tec_agents.mcp.server import build_local_mcp_server
@@ -43,18 +46,18 @@ class FakeTypedChatModel:
         visible_text = "\n".join(str(message.get("content") or "") for message in messages)
         if "OrchestratorAgent" in system:
             return self._orchestrator()
-        if "DataAgent" in system:
+        if "You are LLM DataAgent." in system:
             return self._data_agent()
-        if "MathAgent" in system:
+        if "You are LLM MathAgent." in system:
             return self._math_agent(visible_text)
-        if "AnalysisAgent" in system:
+        if "You are LLM AnalysisAgent." in system:
             return (
                 "<role_response>"
                 '{"status":"done","message":"findings ready",'
                 '"findings":["A high interval artifact is available for midlat_europe."]}'
                 "</role_response>"
             )
-        if "ReportAgent" in system:
+        if "You are LLM ReportAgent." in system:
             return '<final_answer>{"answer":"High TEC analysis completed for midlat_europe."}</final_answer>'
         raise AssertionError("Unknown fake prompt")
 
@@ -66,8 +69,7 @@ class FakeTypedChatModel:
                 '{"action":"call_role","role":"data_agent","assignment":'
                 '{"objective":"prepare_data_artifacts","task_summary":"Prepare TEC series handles.",'
                 '"scope":{"dataset_ref":"smoke","regions":["midlat_europe"],"start":"2024-03-01","end":"2024-04-01","task_intent":"high_tec"},'
-                '"available_input_types":[],"expected_output_type":"data_artifacts",'
-                '"required_output_artifact_types":["series_id"],'
+                '"deliverables_to_produce":["series_id"],"expected_output_type":"data_artifacts",'
                 '"completion_criteria":"Return done when series_id handles are visible.",'
                 '"constraints":["Use only DataAgent tools."]},'
                 '"reason":"prepare data"}'
@@ -79,8 +81,7 @@ class FakeTypedChatModel:
                 '{"action":"call_role","role":"math_agent","assignment":'
                 '{"objective":"prepare_high_interval_artifacts","task_summary":"Prepare numerical high TEC artifacts.",'
                 '"scope":{"dataset_ref":"smoke","regions":["midlat_europe"],"start":"2024-03-01","end":"2024-04-01","task_intent":"high_tec"},'
-                '"available_input_types":["series_id"],"expected_output_type":"computed_artifacts",'
-                '"required_output_artifact_types":["threshold_id","high_intervals"],'
+                '"deliverables_to_produce":["high_intervals"],"expected_output_type":"computed_artifacts",'
                 '"completion_criteria":"Return done only when required computed artifact types are visible.",'
                 '"constraints":["Use only MathAgent tools."]},'
                 '"reason":"prepare computed artifacts"}'
@@ -92,8 +93,7 @@ class FakeTypedChatModel:
                 '{"action":"call_role","role":"analysis_agent","assignment":'
                 '{"objective":"interpret_computed_artifacts","task_summary":"Interpret visible high TEC artifacts.",'
                 '"scope":{"dataset_ref":"smoke","regions":["midlat_europe"],"start":"2024-03-01","end":"2024-04-01","task_intent":"high_tec"},'
-                '"available_input_types":["high_intervals"],"expected_output_type":"findings",'
-                '"required_output_artifact_types":["findings"],'
+                '"deliverables_to_produce":["findings"],"expected_output_type":"findings",'
                 '"completion_criteria":"Return done with non-empty findings.",'
                 '"constraints":["Do not call tools."]},'
                 '"reason":"interpret artifacts"}'
@@ -105,8 +105,7 @@ class FakeTypedChatModel:
                 '{"action":"call_role","role":"report_agent","assignment":'
                 '{"objective":"produce_final_answer","task_summary":"Write final answer from visible artifacts and findings.",'
                 '"scope":{"dataset_ref":"smoke","regions":["midlat_europe"],"start":"2024-03-01","end":"2024-04-01","task_intent":"high_tec"},'
-                '"available_input_types":["high_intervals","findings"],"expected_output_type":"final_answer",'
-                '"required_output_artifact_types":["final_answer"],'
+                '"deliverables_to_produce":["final_answer"],"expected_output_type":"final_answer",'
                 '"completion_criteria":"Return final_answer.",'
                 '"constraints":["Do not call tools."]},'
                 '"reason":"finalize answer"}'
@@ -171,13 +170,24 @@ def build_tiny_dataset(path: Path) -> None:
 
 def main() -> None:
     dataset_path = PROJECT_ROOT / "data" / "examples" / "smoke_typed_fake_run.csv"
-    build_tiny_dataset(dataset_path)
-    register_dataset(
-        dataset_ref="smoke",
-        path=dataset_path,
-        file_format="csv",
-        time_column="time",
-    )
+    try:
+        build_tiny_dataset(dataset_path)
+        register_dataset(
+            dataset_ref="smoke",
+            path=dataset_path,
+            file_format="csv",
+            time_column="time",
+        )
+        test_fake_high_tec_success()
+        test_fake_invented_handle_failure()
+        test_fake_multi_region_completion_state()
+    finally:
+        if dataset_path.exists():
+            dataset_path.unlink()
+    print("Typed fake-run smoke test finished successfully.")
+
+
+def test_fake_high_tec_success() -> None:
     server = build_local_mcp_server(run_id="smoke_typed_fake_run")
     agent = LLMFullTypedMultiAgent(
         model=FakeTypedChatModel(),
@@ -201,8 +211,78 @@ def main() -> None:
     assert result.repeated_equivalent_role_assignment_count == 0
     assert result.tool_schema_validation_error_count == 0
     assert result.tool_error_count == 0
-    assert hasattr(result, "tool_error_count")
-    print("Typed fake-run smoke test finished successfully.")
+    assert result.invalid_artifact_handle_count == 0
+    assert result.multiple_protocol_blocks_in_single_output_count == 0
+
+
+def test_fake_invented_handle_failure() -> None:
+    context = {
+        "parsed_task": {
+            "task_type": "compare_regions",
+            "dataset_ref": "smoke",
+            "region_ids": ["midlat_europe", "highlat_north"],
+            "start": "2024-03-01",
+            "end": "2024-04-01",
+        },
+        "data_artifacts": {"series_by_region": {}},
+        "math_artifacts": {},
+        "analysis_artifacts": {"findings": []},
+    }
+    tool_call = TypedToolCall(
+        name="tec_compute_series_stats",
+        arguments={"series_id": "midlat_europe_20240301_20240401"},
+    )
+    error = invalid_artifact_handle_error(tool_call=tool_call, context=context)
+    assert error
+    assert "runtime-visible" in error
+    for forbidden in ["next tool", "next role", "expected_tool_sequence", "missing_goal_artifacts"]:
+        assert forbidden not in error
+
+
+def test_fake_multi_region_completion_state() -> None:
+    assignment = RoleAssignment(
+        objective="prepare_data_artifacts",
+        task_summary="Prepare data.",
+        scope=RoleScope(
+            dataset_ref="smoke",
+            regions=["equatorial_atlantic", "midlat_europe", "highlat_north"],
+            start="2024-03-01",
+            end="2024-04-01",
+            task_intent="compare_regions",
+        ),
+        available_input_types=[],
+        deliverables_to_produce=["series_id"],
+        expected_output_type="data_artifacts",
+        required_output_artifact_types=["series_id"],
+        completion_criteria="Return done when data handles are visible.",
+        constraints=["Use only DataAgent tools."],
+    )
+    context = {
+        "parsed_task": {
+            "task_type": "compare_regions",
+            "dataset_ref": "smoke",
+            "region_ids": ["equatorial_atlantic", "midlat_europe", "highlat_north"],
+            "start": "2024-03-01",
+            "end": "2024-04-01",
+        },
+        "data_artifacts": {
+            "series_by_region": {
+                "equatorial_atlantic": {"series_id": "series_a", "metadata": {"n_points": 744}},
+                "midlat_europe": {"series_id": "series_b", "metadata": {"n_points": 744}},
+                "highlat_north": {"series_id": "series_c", "metadata": {"n_points": 744}},
+            }
+        },
+        "math_artifacts": {},
+        "analysis_artifacts": {"findings": []},
+    }
+    packet = build_typed_state_packet(
+        user_query="Compare TEC statistics.",
+        current_role="data_agent",
+        current_assignment=assignment,
+        context=context,
+    )
+    assert packet["assignment_progress"]["scope_covered"] is True
+    assert len(packet["available_input_artifacts"]["series_id"]) == 3
 
 
 if __name__ == "__main__":

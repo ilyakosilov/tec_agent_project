@@ -45,11 +45,21 @@ SOURCE_CANDIDATES = {
     ],
     "typed_v2": [
         METRICS_DIR / "qwen_multi_agent_typed_v2_batch_colab.json",
+        METRICS_DIR / "experiment_3" / "qwen_multi_agent_typed_v2_batch_colab.json",
         METRICS_DIR
         / "real_runs"
         / "multi_agent"
         / "experiment_3"
         / "qwen_multi_agent_typed_v2_batch_colab.json",
+    ],
+    "typed_v3": [
+        METRICS_DIR / "qwen_multi_agent_typed_v3_batch_colab.json",
+        METRICS_DIR / "experiment_4" / "qwen_multi_agent_typed_v3_batch_colab.json",
+        METRICS_DIR
+        / "real_runs"
+        / "multi_agent"
+        / "experiment_4"
+        / "qwen_multi_agent_typed_v3_batch_colab.json",
     ],
 }
 
@@ -68,6 +78,11 @@ def main() -> None:
         print(
             "Typed v2 Qwen multi-agent batch file not found. "
             "Run/export qwen_multi_agent_typed_v2_batch_colab.json first."
+        )
+    if sources["typed_v3"] is None:
+        print(
+            "Typed v3 Qwen multi-agent batch file not found. "
+            "Run/export outputs/metrics/experiment_4/qwen_multi_agent_typed_v3_batch_colab.json first."
         )
 
     records_by_source = {
@@ -88,12 +103,14 @@ def main() -> None:
         old = records_by_source["qwen_multi_old"].get(preset_id, {})
         typed_v1 = records_by_source["typed_v1"].get(preset_id, {})
         typed_v2 = records_by_source["typed_v2"].get(preset_id, {})
+        typed_v3 = records_by_source["typed_v3"].get(preset_id, {})
         task_type = (
             _task_type(single)
             or _task_type(rule)
             or _task_type(old)
             or _task_type(typed_v1)
             or _task_type(typed_v2)
+            or _task_type(typed_v3)
         )
         rows.append(
             {
@@ -146,6 +163,46 @@ def main() -> None:
                     typed_v2,
                     "stalled_loop_detected",
                 ),
+                "typed_v3_success": _agent_success(typed_v3),
+                "typed_v3_overall_ok": typed_v3.get("overall_ok"),
+                "typed_v3_tool_sequence_match": _metric(typed_v3, "tool_sequence_match"),
+                "typed_v3_final_answer_present": bool(
+                    (_agent_field(typed_v3, "answer") or typed_v3.get("final_answer_preview"))
+                ),
+                "typed_v3_role_order": " -> ".join(
+                    str(item) for item in _agent_field(typed_v3, "role_agent_order") or []
+                ),
+                "typed_v3_tool_sequence": " -> ".join(
+                    str(item) for item in _agent_field(typed_v3, "actual_tool_sequence") or []
+                ),
+                "typed_v3_premature_role_completion_count": _agent_field(
+                    typed_v3,
+                    "premature_role_completion_count",
+                ),
+                "typed_v3_empty_findings_done_count": _agent_field(
+                    typed_v3,
+                    "empty_findings_done_count",
+                ),
+                "typed_v3_repeated_equivalent_role_assignment_count": _agent_field(
+                    typed_v3,
+                    "repeated_equivalent_role_assignment_count",
+                ),
+                "typed_v3_tool_schema_validation_error_count": _agent_field(
+                    typed_v3,
+                    "tool_schema_validation_error_count",
+                ),
+                "typed_v3_invalid_artifact_handle_count": _agent_field(
+                    typed_v3,
+                    "invalid_artifact_handle_count",
+                ),
+                "typed_v3_multiple_protocol_blocks_in_single_output_count": _agent_field(
+                    typed_v3,
+                    "multiple_protocol_blocks_in_single_output_count",
+                ),
+                "typed_v3_stalled_loop_detected": _agent_field(
+                    typed_v3,
+                    "stalled_loop_detected",
+                ),
                 "key_metric_summary": _key_metric_summary(
                     str(task_type),
                     single,
@@ -153,6 +210,7 @@ def main() -> None:
                     old,
                     typed_v1,
                     typed_v2,
+                    typed_v3,
                 ),
             }
         )
@@ -219,42 +277,47 @@ def _key_metric_summary(
     old: dict[str, Any],
     typed_v1: dict[str, Any],
     typed_v2: dict[str, Any],
+    typed_v3: dict[str, Any],
 ) -> str:
     if task_type == "high_tec":
         return (
-            "threshold_abs_error single/rule/old/typed_v1/typed_v2="
+            "threshold_abs_error single/rule/old/typed_v1/typed_v2/typed_v3="
             f"{_metric(single, 'threshold_abs_error')}/"
             f"{_metric(rule, 'threshold_abs_error')}/"
             f"{_metric(old, 'threshold_abs_error')}/"
             f"{_metric(typed_v1, 'threshold_abs_error')}/"
-            f"{_metric(typed_v2, 'threshold_abs_error')}"
+            f"{_metric(typed_v2, 'threshold_abs_error')}/"
+            f"{_metric(typed_v3, 'threshold_abs_error')}"
         )
     if task_type == "stable_intervals":
         return (
-            "stable_interval_count_error single/rule/old/typed_v1/typed_v2="
+            "stable_interval_count_error single/rule/old/typed_v1/typed_v2/typed_v3="
             f"{_metric(single, 'stable_interval_count_error')}/"
             f"{_metric(rule, 'stable_interval_count_error')}/"
             f"{_metric(old, 'stable_interval_count_error')}/"
             f"{_metric(typed_v1, 'stable_interval_count_error')}/"
-            f"{_metric(typed_v2, 'stable_interval_count_error')}"
+            f"{_metric(typed_v2, 'stable_interval_count_error')}/"
+            f"{_metric(typed_v3, 'stable_interval_count_error')}"
         )
     if task_type == "compare_regions":
         return (
-            "mean_abs_error_avg single/rule/old/typed_v1/typed_v2="
+            "mean_abs_error_avg single/rule/old/typed_v1/typed_v2/typed_v3="
             f"{_metric(single, 'mean_abs_error_avg')}/"
             f"{_metric(rule, 'mean_abs_error_avg')}/"
             f"{_metric(old, 'mean_abs_error_avg')}/"
             f"{_metric(typed_v1, 'mean_abs_error_avg')}/"
-            f"{_metric(typed_v2, 'mean_abs_error_avg')}"
+            f"{_metric(typed_v2, 'mean_abs_error_avg')}/"
+            f"{_metric(typed_v3, 'mean_abs_error_avg')}"
         )
     if task_type == "report":
         return (
-            "required_artifacts_present single/rule/old/typed_v1/typed_v2="
+            "required_artifacts_present single/rule/old/typed_v1/typed_v2/typed_v3="
             f"{_metric(single, 'required_artifacts_present')}/"
             f"{_metric(rule, 'required_artifacts_present')}/"
             f"{_metric(old, 'required_artifacts_present')}/"
             f"{_metric(typed_v1, 'required_artifacts_present')}/"
-            f"{_metric(typed_v2, 'required_artifacts_present')}"
+            f"{_metric(typed_v2, 'required_artifacts_present')}/"
+            f"{_metric(typed_v3, 'required_artifacts_present')}"
         )
     return ""
 

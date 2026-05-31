@@ -96,6 +96,7 @@ class RoleAssignment:
     task_summary: str
     scope: RoleScope
     available_input_types: list[str]
+    deliverables_to_produce: list[str]
     expected_output_type: str
     required_output_artifact_types: list[str]
     completion_criteria: str
@@ -110,10 +111,22 @@ class RoleAssignment:
             available_input_types=[
                 str(item) for item in (data.get("available_input_types") or [])
             ],
+            deliverables_to_produce=[
+                str(item)
+                for item in (
+                    data.get("deliverables_to_produce")
+                    or data.get("required_output_artifact_types")
+                    or []
+                )
+            ],
             expected_output_type=str(data.get("expected_output_type") or "other"),
             required_output_artifact_types=[
                 str(item)
-                for item in (data.get("required_output_artifact_types") or [])
+                for item in (
+                    data.get("required_output_artifact_types")
+                    or data.get("deliverables_to_produce")
+                    or []
+                )
             ],
             completion_criteria=str(data.get("completion_criteria") or ""),
             constraints=[str(item) for item in (data.get("constraints") or [])],
@@ -655,6 +668,12 @@ def clean_typed_output(raw_text: str) -> str:
     return blocks[0]["block"]
 
 
+def count_typed_protocol_blocks(raw_text: str) -> int:
+    """Return number of visible protocol blocks after chat-template cleanup."""
+
+    return len(find_protocol_blocks(_strip_generation_noise(raw_text)))
+
+
 def _strip_generation_noise(raw_text: str) -> str:
     """Remove common chat-template and reasoning fragments from model output."""
 
@@ -777,6 +796,12 @@ def _tool_error_summary(
         if contract:
             return f"Invalid arguments. Expected argument contract: {json.dumps(contract, ensure_ascii=False)}"
         return "Invalid arguments for this tool."
+    if error_type == "invalid_artifact_handle":
+        return (
+            "The supplied artifact handle does not exist in runtime-visible state. "
+            "Use only exact artifact handles listed under available_input_artifacts. "
+            "Do not construct handles from region names, dates, or task text."
+        )
     return message or f"{tool_name} returned error_type={error_type}."
 
 
@@ -798,6 +823,7 @@ __all__ = [
     "artifact_type_for_tool",
     "clean_typed_output",
     "compact_tool_result",
+    "count_typed_protocol_blocks",
     "find_protocol_blocks",
     "make_tool_observation",
     "parse_typed_final_answer",

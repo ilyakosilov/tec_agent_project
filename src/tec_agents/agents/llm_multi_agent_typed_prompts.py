@@ -84,11 +84,21 @@ When deciding a handoff:
 - If a role_response status is done, inspect available_artifacts and previous role outputs; do not rely on the role_response to repeat every handle.
 - Select a role whose input requirements appear satisfied, or a role that can produce the artifact type needed by the user request.
 - Create a structured RoleAssignment for that role.
-- Set expected_output_type and completion_criteria.
-- Set required_output_artifact_types to the artifact types this role is being asked to produce before it may report status=done.
+- Set expected_output_type, deliverables_to_produce, and completion_criteria.
+- deliverables_to_produce are the final output artifact types for the current role assignment.
+- Do not claim which runtime input handles already exist. Runtime, not Orchestrator, supplies runtime-visible input handles to workers.
 - Do not specify exact tools.
 - Do not specify a future role order.
 - Do not use evaluation-only plans, evaluator metrics, numerical oracle values, or deterministic traces.
+
+MINIMAL SUFFICIENT DELIVERABLES
+
+Request only the computed deliverables necessary to answer the user's request.
+Do not request basic statistics for a high-interval detection request unless the user explicitly asks for statistics or a report.
+Do not request basic statistics for a stable-interval detection request unless the user explicitly asks for statistics or a report.
+For a comparison request, request a comparison deliverable; per-region statistics may be intermediate computation performed by MathAgent.
+For a report request, multiple deliverables may be necessary because the user explicitly asks for statistics and interval analyses.
+Deliverables describe the final result of this role assignment, not every intermediate artifact.
 
 RoleAction schema:
 <role_action>
@@ -105,9 +115,8 @@ RoleAction schema:
       "end": "YYYY-MM-DD",
       "task_intent": "user_intent"
     }},
-    "available_input_types": [],
+    "deliverables_to_produce": ["series_id"],
     "expected_output_type": "data_artifacts",
-    "required_output_artifact_types": ["series_id"],
     "completion_criteria": "Return role_response when data artifact handles for the assignment scope are available, or cannot_complete if blocked.",
     "constraints": ["Use only the role contract.", "Do not call other agents."]
   }},
@@ -129,7 +138,11 @@ def build_typed_role_prompt(role: str) -> str:
 {BASE_DOMAIN_CONTEXT}
 
 Typed protocol rules:
-- Use exactly one XML-like block.
+- ONE TURN = ONE ACTION.
+- Return exactly one XML-like protocol block in each response.
+- Allowed for DataAgent/MathAgent: one <tool_call> or one <role_response>.
+- Forbidden: two tool_call blocks in one response, tool_call plus role_response in one response, prose before or after the block, or nested tool_call as a tool name.
+- After one tool call succeeds, you will receive updated runtime state before choosing another action.
 - role_response is not a tool.
 - Agents are not tools.
 - Role names must never appear as tool names.
@@ -174,6 +187,7 @@ You must not:
 Completion:
 If requested series_id handles are already visible for the assignment scope, return the minimal role_response block.
 If a tool observation shows the requested series_id handles are available, return the minimal role_response block.
+If assignment_progress.scope_covered is true, return the minimal role_response block.
 Do not keep calling tools after the assignment is complete.
 Do not call tec_series_profile repeatedly.
 Do not call tec_series_profile unless the assignment explicitly asks for profiling.
@@ -231,7 +245,9 @@ You must not:
 - use compare_regions, tec_compare_regions, or tec_build_report.
 
 Important:
-Only use artifact ids visible in available_artifacts or ToolObservation.
+Deliverables are outputs you must produce. They are not required input handles.
+Available input handles are listed only in runtime_available_input_artifacts.
+Only use exact artifact ids visible in runtime_available_input_artifacts, available_artifacts, or ToolObservation.
 If required handles are absent, return:
 <role_response>
 {{"status":"cannot_complete","message":"required artifact handles are not available"}}
@@ -244,12 +260,12 @@ If a tool validation error says an argument is wrong, correct the call using the
 
 WHEN YOU MAY RETURN DONE
 
-Your RoleAssignment contains required_output_artifact_types.
+Your RoleAssignment contains deliverables_to_produce.
 You may return:
 <role_response>
 {{"status":"done","message":"done"}}
 </role_response>
-only when every artifact type listed in required_output_artifact_types is already visible in available_artifacts or has been produced by your successful tool calls in this assignment.
+only when every artifact type listed in deliverables_to_produce is already visible in runtime_available_input_artifacts, available_artifacts, or has been produced by your successful tool calls in this assignment.
 Do not return done after producing only an intermediate artifact.
 
 Intermediate artifact examples:
@@ -357,8 +373,12 @@ def build_typed_role_state_message(
 ) -> str:
     """Render worker-visible typed state packet."""
 
+    status_lines = _assignment_status_lines(role=role, state_packet=state_packet)
     return "\n".join(
         [
+            "CURRENT ASSIGNMENT STATUS",
+            *status_lines,
+            "",
             f"Typed state packet for {role}:",
             safe_compact_json(_safe_state_packet(state_packet)),
             "",
@@ -433,7 +453,7 @@ def build_typed_duplicate_tool_message(
     tool_name: str,
     arguments: dict[str, Any],
     state_packet: dict[str, Any],
-) -> str:
+    ) -> str:
     return "\n".join(
         [
             "This exact tool call already succeeded. Do not repeat it.",
@@ -444,6 +464,26 @@ def build_typed_duplicate_tool_message(
             safe_compact_json(_safe_state_packet(state_packet)),
             "",
             "Reuse visible artifact refs from ToolObservation or return role_response if your role is complete.",
+        ]
+    )
+
+
+def build_typed_invalid_artifact_handle_message(
+    *,
+    state_packet: dict[str, Any],
+) -> str:
+    return "\n".join(
+        [
+            "The supplied artifact handle does not exist in runtime-visible state.",
+            "Use only exact artifact handles listed under available_input_artifacts.",
+            "Do not construct handles from region names, dates, or task text.",
+            "",
+            "Runtime-visible input artifacts:",
+            safe_compact_json(
+                _safe_state_packet(state_packet).get("available_input_artifacts") or {}
+            ),
+            "",
+            "Return exactly one valid protocol block. Do not add prose.",
         ]
     )
 
@@ -486,6 +526,80 @@ def build_typed_tool_contract_catalogue(role: str) -> str:
     return "\n".join(lines).strip()
 
 
+def _assignment_status_lines(
+    *,
+    role: str,
+    state_packet: dict[str, Any],
+) -> list[str]:
+    assignment = state_packet.get("current_assignment") or {}
+    progress = state_packet.get("assignment_progress") or {}
+    available_inputs = state_packet.get("available_input_artifacts") or {}
+    lines = [
+        f"Role: {role}",
+        f"Objective: {assignment.get('objective') or ''}",
+        "Deliverables to produce: "
+        + json.dumps(
+            assignment.get("deliverables_to_produce")
+            or assignment.get("required_output_artifact_types")
+            or [],
+            ensure_ascii=False,
+        ),
+        "Runtime-visible inputs/artifacts:",
+    ]
+    input_lines = _available_input_lines(available_inputs)
+    lines.extend(input_lines or ["- none"])
+    if progress:
+        lines.extend(
+            [
+                "Assignment progress:",
+                "- requested regions: "
+                + json.dumps(progress.get("requested_regions") or [], ensure_ascii=False),
+                "- covered regions: "
+                + json.dumps(progress.get("regions_with_series") or [], ensure_ascii=False),
+                "- scope_covered: " + str(bool(progress.get("scope_covered"))).lower(),
+                "- visible deliverables: "
+                + json.dumps(
+                    progress.get("visible_deliverables_to_produce")
+                    or progress.get("visible_required_output_artifact_types")
+                    or [],
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+    notice = state_packet.get("protocol_notice")
+    if notice:
+        lines.extend(["Protocol notice:", f"- {notice}"])
+    if role == "data_agent" and progress.get("scope_covered") is True:
+        lines.extend(
+            [
+                "If scope_covered is true, do not call another data tool.",
+                "Return exactly:",
+                '<role_response>{"status":"done","message":"done"}</role_response>',
+            ]
+        )
+    return lines
+
+
+def _available_input_lines(available_inputs: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for artifact_type, items in available_inputs.items():
+        if not items:
+            continue
+        if not isinstance(items, list):
+            items = [items]
+        for item in items:
+            if isinstance(item, dict):
+                artifact_id = item.get("artifact_id") or item.get(artifact_type)
+                region_id = item.get("region_id")
+                if region_id:
+                    lines.append(f"- {artifact_type} for {region_id}: {artifact_id}")
+                else:
+                    lines.append(f"- {artifact_type}: {artifact_id or item}")
+            else:
+                lines.append(f"- {artifact_type}: {item}")
+    return lines
+
+
 def _safe_state_packet(packet: dict[str, Any]) -> dict[str, Any]:
     """Drop any evaluator-only keys if a caller accidentally supplied them."""
 
@@ -525,6 +639,7 @@ __all__ = [
     "build_typed_role_state_message",
     "build_typed_protocol_violation_message",
     "build_typed_role_response_as_tool_repair_message",
+    "build_typed_invalid_artifact_handle_message",
     "build_typed_duplicate_tool_message",
     "build_typed_tool_contract_catalogue",
 ]
