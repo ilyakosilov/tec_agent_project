@@ -243,6 +243,8 @@ outputs/figures/
 
 # Models and local secrets
 models/
+hf_cache/
+llama.cpp/
 *.safetensors
 *.bin
 *.gguf
