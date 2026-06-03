@@ -17,8 +17,12 @@ if str(SRC_DIR) not in sys.path:
 
 from tec_agents.agents.llm_multi_agent_function_handoff import (
     build_function_handoff_state_packet,
+    requested_regions_from_task,
+    runtime_visible_handles,
+    validate_visible_artifact_handles,
 )
 from tec_agents.agents.llm_multi_agent_function_handoff_prompts import (
+    PROMPT_REVISION,
     build_function_handoff_orchestrator_prompt,
     build_function_handoff_role_prompt,
     build_function_handoff_state_message,
@@ -37,6 +41,8 @@ def main() -> None:
     test_orchestrator_handoffs()
     test_worker_allowlists()
     test_return_to_orchestrator()
+    test_grounded_state_packet()
+    test_invented_handle_detection()
     test_prompt_and_state_no_forbidden_hints()
     print("Function-handoff parser-only smoke test finished successfully.")
 
@@ -90,6 +96,113 @@ def test_return_to_orchestrator() -> None:
     assert parsed.call.name == RETURN_FUNCTION
 
 
+def test_grounded_state_packet() -> None:
+    assert PROMPT_REVISION == "function_handoff_grounded_state_v2"
+    context = {
+        "parsed_task": {
+            "task_type": "compare_regions",
+            "dataset_ref": "default",
+            "region_ids": ["midlat_europe", "highlat_north"],
+            "start": "2024-03-01",
+            "end": "2024-04-01",
+        },
+        "data_artifacts": {
+            "series_by_region": {
+                "midlat_europe": {
+                    "series_id": "series_mid",
+                    "metadata": {"n_points": 744},
+                }
+            }
+        },
+        "math_artifacts": {
+            "stats_by_region": {
+                "midlat_europe": {
+                    "stats_id": "stats_mid",
+                    "series_id": "series_mid",
+                }
+            }
+        },
+        "completed_tool_calls": [
+            {
+                "role": "data_agent",
+                "tool_name": "tec_get_timeseries",
+                "returned_artifacts": {"series_id": "series_mid"},
+            }
+        ],
+    }
+    packet = build_function_handoff_state_packet(
+        user_query="Compare two regions.",
+        current_role="data_agent",
+        current_message="Load missing series.",
+        context=context,
+    )
+    assert packet["assignment_progress"]["requested_regions"] == [
+        "midlat_europe",
+        "highlat_north",
+    ]
+    assert packet["assignment_progress"]["covered_regions"] == ["midlat_europe"]
+    assert packet["assignment_progress"]["missing_regions"] == ["highlat_north"]
+    assert packet["assignment_progress"]["scope_covered"] is False
+    assert runtime_visible_handles(context)["series_id"] == [
+        {"region_id": "midlat_europe", "id": "series_mid"}
+    ]
+    assert requested_regions_from_task(context["parsed_task"]) == [
+        "midlat_europe",
+        "highlat_north",
+    ]
+    state_text = build_function_handoff_state_message(
+        role="data_agent",
+        user_query="Compare two regions.",
+        state_packet=packet,
+    )
+    assert "CURRENT RUNTIME FACTS" in state_text
+    assert "missing_regions" in state_text
+    assert "highlat_north" in state_text
+    math_text = build_function_handoff_state_message(
+        role="math_agent",
+        user_query="Compare two regions.",
+        state_packet=build_function_handoff_state_packet(
+            user_query="Compare two regions.",
+            current_role="math_agent",
+            current_message="Compute comparison.",
+            context=context,
+        ),
+    )
+    assert "math input rule: use only exact handles listed above" in math_text
+    assert "series_mid" in math_text
+    assert "stats_mid" in math_text
+
+
+def test_invented_handle_detection() -> None:
+    context = {
+        "parsed_task": {"region_ids": ["midlat_europe"]},
+        "data_artifacts": {
+            "series_by_region": {
+                "midlat_europe": {
+                    "series_id": "series_real",
+                    "metadata": {"n_points": 744},
+                }
+            }
+        },
+        "math_artifacts": {},
+    }
+    assert (
+        validate_visible_artifact_handles(
+            "tec_compute_series_stats",
+            {"series_id": "series_real"},
+            context,
+        )
+        is None
+    )
+    error = validate_visible_artifact_handles(
+        "tec_compute_series_stats",
+        {"series_id": "midlat_europe_2024-03-01_2024-04-01"},
+        context,
+    )
+    assert error
+    assert "not runtime-visible" in error
+
+
 def test_prompt_and_state_no_forbidden_hints() -> None:
     context = {
         "parsed_task": {
@@ -103,6 +216,15 @@ def test_prompt_and_state_no_forbidden_hints() -> None:
         "data_artifacts": {},
         "math_artifacts": {},
         "analysis_artifacts": {"findings": []},
+        "function_runtime_feedback": [
+            {
+                "kind": "repeated_successful_tool_call",
+                "message": (
+                    "This exact tool call already succeeded and was not executed again. "
+                    "Use the artifact shown in CURRENT RUNTIME FACTS or return_to_orchestrator."
+                ),
+            }
+        ],
         # This key must be stripped from prompt-visible state.
         "missing_goal_artifacts": ["forbidden"],
     }
@@ -140,6 +262,15 @@ def test_prompt_and_state_no_forbidden_hints() -> None:
     ]
     for item in forbidden:
         assert item.lower() not in text.lower(), item
+    orchestrator_prompt = build_function_handoff_orchestrator_prompt()
+    assert "call DataAgent, not MathAgent" in orchestrator_prompt
+    assert "DataAgent cannot list series IDs" in orchestrator_prompt
+    assert "If missing_regions is non-empty" in build_function_handoff_role_prompt(
+        "data_agent"
+    )
+    assert "Use only exact artifact handles listed under CURRENT RUNTIME FACTS" in (
+        build_function_handoff_role_prompt("math_agent")
+    )
 
 
 if __name__ == "__main__":

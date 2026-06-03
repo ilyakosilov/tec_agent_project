@@ -57,14 +57,21 @@ def main() -> None:
     assert "compare_agent_to_gold" in all_text
     assert 'ARCHITECTURE_MODE = "qwen_multi_agent_function_handoff_full_llm"' in all_text
     assert 'FUNCTION_HANDOFF_PROTOCOL_VERSION = "function_handoff_v1"' in all_text
-    assert 'PROMPT_REVISION = "function_handoff_minimal_v1"' in all_text
-    assert 'EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / "experiment_5_function_handoff"' in all_text
-    assert "qwen_multi_agent_function_handoff_batch_colab.json" in all_text
-    assert "qwen_multi_agent_function_handoff_{preset_id}_colab.json" in all_text
+    assert 'PROMPT_REVISION = "function_handoff_grounded_state_v2"' in all_text
+    assert 'EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / "experiment_6_function_handoff_v2"' in all_text
+    assert "qwen_multi_agent_function_handoff_v2_batch_colab.json" in all_text
+    assert "qwen_multi_agent_function_handoff_v2_{preset_id}_colab.json" in all_text
     assert "outputs\" / \"metrics\" / \"real_runs\" / \"multi_agent\"" in all_text
     assert "tec_build_report" not in all_text
     assert "tec_compare_regions" not in all_text
     assert "deterministic baseline trace" not in all_text
+    assert 'EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / "experiment_5_function_handoff"' not in all_text
+
+    first_code = next(
+        _source(cell) for cell in data["cells"] if cell.get("cell_type") == "code"
+    )
+    assert "Pillow==12.2.0" in first_code
+    assert "Runtime \u2192 Restart session" in first_code
 
     configs = get_five_task_configs()
     assert {item["preset_id"] for item in configs} == EXPECTED_PRESETS
@@ -120,6 +127,9 @@ def main() -> None:
         "invalid_function_name_count",
         "forbidden_function_call_count",
         "multiple_function_blocks_in_single_output_count",
+        "invalid_artifact_handle_count",
+        "repeated_role_message_count",
+        "successful_final_tool_without_return_count",
         "role_agent_order",
         "actual_tool_sequence",
         "final_answer_present",

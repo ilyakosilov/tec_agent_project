@@ -62,6 +62,8 @@ class FunctionHandoffRoleOutput:
     forbidden_function_call_count: int = 0
     repeated_tool_call_count: int = 0
     multiple_function_blocks_in_single_output_count: int = 0
+    invalid_artifact_handle_count: int = 0
+    successful_final_tool_without_return_count: int = 0
     tool_error_count: int = 0
     repair_attempt_count: int = 0
     stalled_loop_detected: bool = False
@@ -90,6 +92,9 @@ class LLMFunctionHandoffMultiAgentResult:
     forbidden_function_call_count: int
     repeated_tool_call_count: int
     multiple_function_blocks_in_single_output_count: int
+    invalid_artifact_handle_count: int
+    repeated_role_message_count: int
+    successful_final_tool_without_return_count: int
     tool_error_count: int
     stalled_loop_detected: bool
     repair_attempt_count: int
@@ -228,6 +233,7 @@ class LLMFunctionHandoffRoleAgent:
         ]
         consecutive_parse_errors = 0
         tool_call_count = 0
+        previous_successful_final_tool = False
 
         for step in range(1, self.max_role_steps + 1):
             raw = self.model.generate(
@@ -327,6 +333,10 @@ class LLMFunctionHandoffRoleAgent:
                 output.role_steps.append(role_step)
                 continue
 
+            if previous_successful_final_tool:
+                output.successful_final_tool_without_return_count += 1
+                role_step["final_tool_return_expected"] = True
+
             if call.name not in self.client.list_tool_names():
                 output.invalid_function_name_count += 1
                 role_step["function_status"] = "unregistered_tool"
@@ -343,12 +353,71 @@ class LLMFunctionHandoffRoleAgent:
                 output.repair_attempt_count += 1
                 continue
 
+            invalid_handle_error = validate_visible_artifact_handles(call.name, call.arguments, context)
+            if invalid_handle_error:
+                output.invalid_artifact_handle_count += 1
+                role_step["function_status"] = "invalid_artifact_handle"
+                role_step["error_message"] = invalid_handle_error
+                observation = make_function_tool_observation(
+                    tool_name=call.name,
+                    status="error",
+                    result={},
+                    error={
+                        "error_type": "invalid_artifact_handle",
+                        "message": invalid_handle_error,
+                        "tool_name": call.name,
+                    },
+                )
+                role_step["observation"] = observation
+                context.setdefault("function_tool_observations", []).append(observation)
+                context.setdefault("function_runtime_feedback", []).append(
+                    {
+                        "kind": "invalid_artifact_handle",
+                        "role": self.role,
+                        "tool_name": call.name,
+                        "message": (
+                            "The supplied artifact handle is not runtime-visible. "
+                            "Use only exact handles listed in CURRENT RUNTIME FACTS."
+                        ),
+                    }
+                )
+                output.tool_observations.append(observation)
+                output.role_steps.append(role_step)
+                output.repair_attempt_count += 1
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": build_function_handoff_state_message(
+                            role=self.role,
+                            user_query=user_query,
+                            state_packet=build_function_handoff_state_packet(
+                                user_query=user_query,
+                                current_role=self.role,
+                                current_message=message,
+                                context=context,
+                            ),
+                        ),
+                    }
+                )
+                continue
+
             key = tool_call_key(call.name, call.arguments)
             successful_keys = context.setdefault("successful_tool_call_keys", set())
             if key in successful_keys:
                 output.repeated_tool_call_count += 1
                 role_step["function_status"] = "skipped_repeated"
                 output.role_steps.append(role_step)
+                context.setdefault("function_runtime_feedback", []).append(
+                    {
+                        "kind": "repeated_successful_tool_call",
+                        "role": self.role,
+                        "tool_name": call.name,
+                        "message": (
+                            "This exact tool call already succeeded and was not executed again. "
+                            "Use the artifact shown in CURRENT RUNTIME FACTS or return_to_orchestrator."
+                        ),
+                    }
+                )
                 if output.repeated_tool_call_count >= 2:
                     output.stalled_loop_detected = True
                     output.status = "failed"
@@ -358,9 +427,15 @@ class LLMFunctionHandoffRoleAgent:
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_function_handoff_repair_message(
-                            self.role,
-                            "This exact tool call already succeeded. Use visible artifacts or return_to_orchestrator.",
+                        "content": build_function_handoff_state_message(
+                            role=self.role,
+                            user_query=user_query,
+                            state_packet=build_function_handoff_state_packet(
+                                user_query=user_query,
+                                current_role=self.role,
+                                current_message=message,
+                                context=context,
+                            ),
                         ),
                     }
                 )
@@ -397,6 +472,7 @@ class LLMFunctionHandoffRoleAgent:
             if response.status == "ok" and response.result is not None:
                 successful_keys.add(key)
                 output.tool_sequence.append(call.name)
+                previous_successful_final_tool = is_final_like_tool(call.name)
                 record_successful_tool_call(
                     context=context,
                     role=self.role,
@@ -464,6 +540,7 @@ class LLMFunctionHandoffMultiAgent:
         context["function_role_returns"] = []
         context["function_handoffs"] = []
         context["function_tool_observations"] = []
+        context["function_runtime_feedback"] = []
 
         counters = _empty_global_counters()
         orchestration_steps: list[dict[str, Any]] = []
@@ -492,6 +569,21 @@ class LLMFunctionHandoffMultiAgent:
                 error_message = f"Orchestrator selected invalid function {call.name!r}."
                 break
             message = str(call.arguments.get("message") or "")
+            role_message_key = (role, " ".join(message.lower().split()))
+            if role_message_key in context.setdefault("function_role_message_keys", set()):
+                counters["repeated_role_message_count"] += 1
+                context.setdefault("function_runtime_feedback", []).append(
+                    {
+                        "kind": "repeated_role_message",
+                        "role": role,
+                        "message": (
+                            "The same role was called with the same message again "
+                            "while runtime-visible state should be inspected."
+                        ),
+                    }
+                )
+            else:
+                context["function_role_message_keys"].add(role_message_key)
             decision = {
                 "step": step,
                 "function_name": call.name,
@@ -601,6 +693,11 @@ class LLMFunctionHandoffMultiAgent:
             multiple_function_blocks_in_single_output_count=counters[
                 "multiple_function_blocks_in_single_output_count"
             ],
+            invalid_artifact_handle_count=counters["invalid_artifact_handle_count"],
+            repeated_role_message_count=counters["repeated_role_message_count"],
+            successful_final_tool_without_return_count=counters[
+                "successful_final_tool_without_return_count"
+            ],
             tool_error_count=counters["tool_error_count"],
             stalled_loop_detected=bool(counters["stalled_loop_detected"]),
             repair_attempt_count=counters["repair_attempt_count"],
@@ -617,12 +714,17 @@ def build_function_handoff_state_packet(
     current_message: str,
     context: dict[str, Any],
 ) -> dict[str, Any]:
+    available_artifacts = summarize_available_artifacts(context)
     return {
         "user_query": user_query,
         "current_role": current_role,
         "current_message": current_message,
         "parsed_task": _public_parsed_task(context.get("parsed_task") or {}),
-        "available_artifacts": summarize_available_artifacts(context),
+        "available_artifacts": available_artifacts,
+        "runtime_visible_handles": runtime_visible_handles(context),
+        "assignment_progress": assignment_progress_for_role(current_role, context),
+        "last_role_return": _last_item(context.get("function_role_returns") or []),
+        "runtime_feedback": list(context.get("function_runtime_feedback") or [])[-4:],
         "previous_role_returns": list(context.get("function_role_returns") or [])[-8:],
         "handoff_history": list(context.get("function_handoffs") or [])[-8:],
         "recent_tool_observations": list(context.get("function_tool_observations") or [])[-8:],
@@ -688,6 +790,112 @@ def summarize_available_artifacts(context: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def runtime_visible_handles(context: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    data = context.get("data_artifacts") or {}
+    math = context.get("math_artifacts") or {}
+    handles: dict[str, list[dict[str, Any]]] = {
+        "series_id": [],
+        "stats_id": [],
+        "threshold_id": [],
+        "high_intervals": [],
+        "stable_intervals": [],
+        "comparison_id": [],
+    }
+    for region_id, item in (data.get("series_by_region") or {}).items():
+        if item.get("series_id"):
+            handles["series_id"].append(
+                {"region_id": region_id, "id": item.get("series_id")}
+            )
+    for region_id, item in (math.get("stats_by_region") or {}).items():
+        if item.get("stats_id"):
+            handles["stats_id"].append(
+                {
+                    "region_id": region_id,
+                    "id": item.get("stats_id"),
+                    "series_id": item.get("series_id"),
+                }
+            )
+    for region_id, item in (math.get("high_tec") or {}).items():
+        threshold = item.get("threshold") or {}
+        intervals = item.get("intervals") or {}
+        if threshold.get("threshold_id"):
+            handles["threshold_id"].append(
+                {
+                    "region_id": region_id,
+                    "id": threshold.get("threshold_id"),
+                    "kind": "high_threshold",
+                }
+            )
+        if intervals:
+            handles["high_intervals"].append(
+                {
+                    "region_id": region_id,
+                    "threshold_id": intervals.get("threshold_id")
+                    or threshold.get("threshold_id"),
+                    "n_intervals": intervals.get("n_intervals"),
+                }
+            )
+    for region_id, item in (math.get("stable_intervals") or {}).items():
+        threshold = item.get("thresholds") or {}
+        intervals = item.get("intervals") or {}
+        if threshold.get("threshold_id"):
+            handles["threshold_id"].append(
+                {
+                    "region_id": region_id,
+                    "id": threshold.get("threshold_id"),
+                    "kind": "stability_threshold",
+                }
+            )
+        if intervals:
+            handles["stable_intervals"].append(
+                {
+                    "region_id": region_id,
+                    "threshold_id": intervals.get("threshold_id")
+                    or threshold.get("threshold_id"),
+                    "n_intervals": intervals.get("n_intervals"),
+                }
+            )
+    comparison = math.get("comparison") or {}
+    if comparison.get("comparison_id"):
+        handles["comparison_id"].append(
+            {
+                "id": comparison.get("comparison_id"),
+                "regions": comparison.get("regions"),
+            }
+        )
+    return handles
+
+
+def assignment_progress_for_role(role: str, context: dict[str, Any]) -> dict[str, Any]:
+    parsed = context.get("parsed_task") or {}
+    requested = requested_regions_from_task(parsed)
+    covered = {
+        region_id
+        for region_id, item in (
+            (context.get("data_artifacts") or {}).get("series_by_region") or {}
+        ).items()
+        if item.get("series_id")
+    }
+    missing = [region for region in requested if region not in covered]
+    progress: dict[str, Any] = {
+        "requested_regions": requested,
+        "covered_regions": [region for region in requested if region in covered],
+        "missing_regions": missing,
+        "scope_covered": bool(requested) and not missing,
+    }
+    if role == "math_agent":
+        progress["visible_input_handles"] = runtime_visible_handles(context)
+    return progress
+
+
+def requested_regions_from_task(parsed: dict[str, Any]) -> list[str]:
+    regions = list(parsed.get("region_ids") or [])
+    region = parsed.get("region_id")
+    if region and region not in regions:
+        regions.append(str(region))
+    return [str(item) for item in regions if str(item).strip()]
+
+
 def merge_function_role_return(context: dict[str, Any], role_return: dict[str, Any]) -> None:
     context.setdefault("function_role_returns", []).append(dict(role_return))
     role = role_return.get("role")
@@ -712,6 +920,7 @@ def make_function_tool_observation(
         "tool_name": tool_name,
         "status": status,
         "artifact_id": artifact_id,
+        "produced_artifact_type": _artifact_type_for_tool(tool_name),
         "summary": _tool_summary(tool_name, status, result, error),
         "result_compact": _compact_tool_result(result),
         "error": error,
@@ -730,6 +939,24 @@ def _artifact_id_for_tool(tool_name: str, result: dict[str, Any]) -> str | None:
         return result.get("comparison_id")
     if tool_name in {"tec_detect_high_intervals", "tec_detect_stable_intervals"}:
         return result.get("intervals_id") or result.get("threshold_id")
+    return None
+
+
+def _artifact_type_for_tool(tool_name: str) -> str | None:
+    if tool_name == "tec_get_timeseries":
+        return "series_id"
+    if tool_name == "tec_compute_series_stats":
+        return "stats_id"
+    if tool_name == "tec_compute_high_threshold":
+        return "threshold_id"
+    if tool_name == "tec_compute_stability_thresholds":
+        return "threshold_id"
+    if tool_name == "tec_detect_high_intervals":
+        return "high_intervals"
+    if tool_name == "tec_detect_stable_intervals":
+        return "stable_intervals"
+    if tool_name == "tec_compare_stats":
+        return "comparison_id"
     return None
 
 
@@ -782,7 +1009,75 @@ def _public_parsed_task(parsed: dict[str, Any]) -> dict[str, Any]:
         "start": parsed.get("start"),
         "end": parsed.get("end"),
         "q": parsed.get("q"),
+        "window_minutes": parsed.get("window_minutes"),
+        "q_delta": parsed.get("q_delta"),
+        "q_std": parsed.get("q_std"),
     }
+
+
+def validate_visible_artifact_handles(
+    tool_name: str,
+    arguments: dict[str, Any],
+    context: dict[str, Any],
+) -> str | None:
+    visible = _visible_handle_sets(context)
+    checks: list[tuple[str, str]] = []
+    for key in ["series_id", "threshold_id", "stats_id", "comparison_id"]:
+        value = arguments.get(key)
+        if isinstance(value, str) and value.strip():
+            checks.append((key, value))
+    stats_ids = arguments.get("stats_ids")
+    if isinstance(stats_ids, list):
+        for value in stats_ids:
+            if isinstance(value, str) and value.strip():
+                checks.append(("stats_id", value))
+    reference_stats_id = arguments.get("reference_stats_id")
+    if isinstance(reference_stats_id, str) and reference_stats_id.strip():
+        checks.append(("stats_id", reference_stats_id))
+
+    for key, value in checks:
+        if value not in visible.get(key, set()):
+            known = sorted(visible.get(key, set()))
+            return (
+                f"{tool_name} argument {key}={value!r} is not runtime-visible. "
+                f"Known {key} handles: {known or '<none>'}."
+            )
+    return None
+
+
+def _visible_handle_sets(context: dict[str, Any]) -> dict[str, set[str]]:
+    handles = runtime_visible_handles(context)
+    visible: dict[str, set[str]] = {
+        "series_id": set(),
+        "stats_id": set(),
+        "threshold_id": set(),
+        "comparison_id": set(),
+    }
+    for item in handles.get("series_id") or []:
+        if item.get("id"):
+            visible["series_id"].add(str(item["id"]))
+    for item in handles.get("stats_id") or []:
+        if item.get("id"):
+            visible["stats_id"].add(str(item["id"]))
+    for item in handles.get("threshold_id") or []:
+        if item.get("id"):
+            visible["threshold_id"].add(str(item["id"]))
+    for item in handles.get("comparison_id") or []:
+        if item.get("id"):
+            visible["comparison_id"].add(str(item["id"]))
+    return visible
+
+
+def is_final_like_tool(tool_name: str) -> bool:
+    return tool_name in {
+        "tec_detect_high_intervals",
+        "tec_detect_stable_intervals",
+        "tec_compare_stats",
+    }
+
+
+def _last_item(items: list[Any]) -> Any:
+    return items[-1] if items else None
 
 
 def _empty_diagnostics() -> dict[str, Any]:
@@ -806,6 +1101,9 @@ def _empty_global_counters() -> dict[str, int]:
         "forbidden_function_call_count": 0,
         "repeated_tool_call_count": 0,
         "multiple_function_blocks_in_single_output_count": 0,
+        "invalid_artifact_handle_count": 0,
+        "repeated_role_message_count": 0,
+        "successful_final_tool_without_return_count": 0,
         "tool_error_count": 0,
         "stalled_loop_detected": 0,
         "repair_attempt_count": 0,
@@ -850,6 +1148,8 @@ def _accumulate_role_output(
         "forbidden_function_call_count",
         "repeated_tool_call_count",
         "multiple_function_blocks_in_single_output_count",
+        "invalid_artifact_handle_count",
+        "successful_final_tool_without_return_count",
         "tool_error_count",
         "repair_attempt_count",
     ]:
@@ -867,7 +1167,12 @@ __all__ = [
     "LLMFunctionHandoffRoleAgent",
     "PROMPT_REVISION",
     "build_function_handoff_state_packet",
+    "assignment_progress_for_role",
+    "is_final_like_tool",
     "make_function_tool_observation",
     "merge_function_role_return",
+    "requested_regions_from_task",
+    "runtime_visible_handles",
     "summarize_available_artifacts",
+    "validate_visible_artifact_handles",
 ]

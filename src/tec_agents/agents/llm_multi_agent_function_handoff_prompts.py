@@ -20,7 +20,7 @@ from tec_agents.agents.llm_single_agent import safe_compact_json
 from tec_agents.llm.prompts import BASE_DOMAIN_CONTEXT
 
 
-PROMPT_REVISION = "function_handoff_minimal_v1"
+PROMPT_REVISION = "function_handoff_grounded_state_v2"
 
 
 def build_function_handoff_orchestrator_prompt() -> str:
@@ -52,6 +52,11 @@ Role responsibilities:
 Decision rules:
 - Inspect the user query, actual available artifacts, previous role returns, and handoff history.
 - Choose the role that should work next from the actual state.
+- If no visible series_id exists for the requested region or regions, call DataAgent, not MathAgent.
+- MathAgent can use only visible artifact handles. Region names and dates are not artifact handles.
+- DataAgent cannot list series IDs. Ask DataAgent to load missing time series, not to list handles.
+- After math_agent reports done and computed artifacts exist, use analysis_agent or report_agent rather than repeating the same math request.
+- For the final user answer, call ReportAgent. Tool execution alone is not a finished workflow.
 - Do not specify a future role sequence.
 - Do not specify exact TEC tool calls.
 - Do not call the same role with the same message repeatedly if state has not changed.
@@ -104,13 +109,16 @@ Your responsibility:
 - Load missing TEC time series for the requested regions/period.
 - Use only data tools or {RETURN_FUNCTION}.
 - Do not compute stats, thresholds, intervals, comparisons, or reports.
+- Do not list available series IDs. You do not have a list tool.
 
 Allowed data tool contracts:
 {_tool_catalogue(DATA_TOOLS)}
 
 Completion:
-- If every requested region already has a visible series_id, call return_to_orchestrator.
-- If you successfully loaded the needed series handles, call return_to_orchestrator.
+- Read CURRENT RUNTIME FACTS first.
+- If missing_regions is non-empty, call tec_get_timeseries for one missing region.
+- If scope_covered is true, call return_to_orchestrator immediately.
+- Do not return done when requested regions have no visible series_id.
 - Do not call tec_series_profile unless profiling is explicitly requested.
 """.strip(),
             ]
@@ -123,7 +131,7 @@ Completion:
                 f"""
 Your responsibility:
 - Create numerical artifacts using visible handles and allowed math tools.
-- Use only exact artifact handles shown in state/observations.
+- Use only exact artifact handles listed under CURRENT RUNTIME FACTS.
 - Do not load data. Do not call other agents. Do not write final answers.
 - If required input handles are absent, call {RETURN_FUNCTION} with status cannot_complete.
 
@@ -134,6 +142,8 @@ Important:
 - For comparison, compute stats_id handles first, then compare stats_id handles.
 - tec_compare_stats accepts stats_ids, not series_id handles.
 - Do not invent artifact handles from region names or dates.
+- If a recent successful tool already produced a usable threshold, interval, stats, or comparison artifact, use that artifact instead of repeating the same call.
+- After a useful computation artifact is produced, call return_to_orchestrator unless another allowed computation is clearly possible from visible handles.
 - After useful computation is done or you are blocked, call return_to_orchestrator.
 """.strip(),
             ]
@@ -191,10 +201,14 @@ def build_function_handoff_state_message(
         header = "State for OrchestratorAgent."
     else:
         header = f"State for {role}."
+    facts = _runtime_fact_lines(role=role, state_packet=safe_packet)
     return "\n".join(
         [
             header,
             f"User query: {user_query}",
+            "",
+            "CURRENT RUNTIME FACTS",
+            *facts,
             "",
             safe_compact_json(safe_packet),
             "",
@@ -228,6 +242,69 @@ def _tool_catalogue(tool_names: set[str]) -> str:
         lines.append(tool_name)
         lines.append(f"- arguments: {json.dumps(contract, ensure_ascii=False, sort_keys=True)}")
     return "\n".join(lines)
+
+
+def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]:
+    parsed = state_packet.get("parsed_task") or {}
+    artifacts = state_packet.get("available_artifacts") or {}
+    progress = state_packet.get("assignment_progress") or {}
+    handles = state_packet.get("runtime_visible_handles") or {}
+    last_return = state_packet.get("last_role_return")
+    feedback = state_packet.get("runtime_feedback") or []
+
+    lines = [
+        f"- task: {parsed.get('task_type')} regions={parsed.get('region_ids') or parsed.get('region_id')} period=[{parsed.get('start')}, {parsed.get('end')})",
+        f"- visible series_id: {_format_handles(handles.get('series_id'))}",
+        f"- visible stats_id: {_format_handles(handles.get('stats_id'))}",
+        f"- visible threshold_id: {_format_handles(handles.get('threshold_id'))}",
+        f"- high interval artifacts: {_format_handles(handles.get('high_intervals'))}",
+        f"- stable interval artifacts: {_format_handles(handles.get('stable_intervals'))}",
+        f"- comparison artifacts: {_format_handles(handles.get('comparison_id'))}",
+        f"- successful TEC calls: {_format_successes(state_packet.get('completed_successful_tool_calls') or [])}",
+    ]
+    if role == "data_agent":
+        lines.extend(
+            [
+                f"- requested regions: {progress.get('requested_regions') or []}",
+                f"- covered regions: {progress.get('covered_regions') or []}",
+                f"- missing_regions: {progress.get('missing_regions') or []}",
+                f"- scope_covered: {bool(progress.get('scope_covered'))}",
+            ]
+        )
+        if progress.get("scope_covered"):
+            lines.append("- data assignment complete: call return_to_orchestrator.")
+    if role == "math_agent":
+        lines.append("- math input rule: use only exact handles listed above.")
+        lines.append("- deliverables already visible above do not need repeated tool calls.")
+    if last_return:
+        lines.append(
+            f"- last role return: {last_return.get('role')} status={last_return.get('status')} message={last_return.get('message')}"
+        )
+    for item in feedback[-3:]:
+        lines.append(f"- runtime feedback: {item.get('message') or item}")
+    return lines
+
+
+def _format_handles(value: Any) -> str:
+    if not value:
+        return "[]"
+    if isinstance(value, list):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _format_successes(calls: list[dict[str, Any]]) -> str:
+    if not calls:
+        return "[]"
+    compact = []
+    for call in calls[-6:]:
+        compact.append(
+            {
+                "tool": call.get("tool_name"),
+                "artifacts": call.get("returned_artifacts"),
+            }
+        )
+    return json.dumps(compact, ensure_ascii=False, sort_keys=True)
 
 
 __all__ = [
