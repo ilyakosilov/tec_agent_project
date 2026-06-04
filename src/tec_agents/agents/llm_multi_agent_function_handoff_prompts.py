@@ -20,7 +20,7 @@ from tec_agents.agents.llm_single_agent import safe_compact_json
 from tec_agents.llm.prompts import BASE_DOMAIN_CONTEXT
 
 
-PROMPT_REVISION = "function_handoff_grounded_state_v2"
+PROMPT_REVISION = "function_handoff_grounded_completion_state_v3"
 
 
 def build_function_handoff_orchestrator_prompt() -> str:
@@ -55,7 +55,8 @@ Decision rules:
 - If no visible series_id exists for the requested region or regions, call DataAgent, not MathAgent.
 - MathAgent can use only visible artifact handles. Region names and dates are not artifact handles.
 - DataAgent cannot list series IDs. Ask DataAgent to load missing time series, not to list handles.
-- After math_agent reports done and computed artifacts exist, use analysis_agent or report_agent rather than repeating the same math request.
+- If a worker already returned done and no new artifact has appeared, do not repeat the same role/message.
+- When computed artifacts are already visible and math_agent has returned, choose analysis_agent or report_agent from the actual user need.
 - For the final user answer, call ReportAgent. Tool execution alone is not a finished workflow.
 - Do not specify a future role sequence.
 - Do not specify exact TEC tool calls.
@@ -116,9 +117,11 @@ Allowed data tool contracts:
 
 Completion:
 - Read CURRENT RUNTIME FACTS first.
-- If missing_regions is non-empty, call tec_get_timeseries for one missing region.
+- Compare requested regions with covered regions shown in CURRENT RUNTIME FACTS.
+- If a requested region has no visible series_id, call tec_get_timeseries for one such region.
 - If scope_covered is true, call return_to_orchestrator immediately.
 - Do not return done when requested regions have no visible series_id.
+- Do not repeat tec_get_timeseries for a region that is already covered.
 - Do not call tec_series_profile unless profiling is explicitly requested.
 """.strip(),
             ]
@@ -139,11 +142,15 @@ Allowed math tool contracts:
 {_tool_catalogue(MATH_TOOLS)}
 
 Important:
+- Deliverables are outputs to produce, not input handles.
+- Runtime-visible handles are the only valid inputs.
 - For comparison, compute stats_id handles first, then compare stats_id handles.
 - tec_compare_stats accepts stats_ids, not series_id handles.
 - Do not invent artifact handles from region names or dates.
-- If a recent successful tool already produced a usable threshold, interval, stats, or comparison artifact, use that artifact instead of repeating the same call.
-- After a useful computation artifact is produced, call return_to_orchestrator unless another allowed computation is clearly possible from visible handles.
+- After each successful tool call you receive updated CURRENT RUNTIME FACTS.
+- If the visible artifacts already satisfy your current message, call return_to_orchestrator.
+- Do not repeat a tool call that already succeeded for the same visible handles.
+- For comparison, do not recompute stats for a series when a visible stats_id for that series already exists.
 - After useful computation is done or you are blocked, call return_to_orchestrator.
 """.strip(),
             ]
@@ -251,6 +258,9 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
     handles = state_packet.get("runtime_visible_handles") or {}
     last_return = state_packet.get("last_role_return")
     feedback = state_packet.get("runtime_feedback") or []
+    role_successes = state_packet.get("current_role_successful_tool_calls") or []
+    role_observations = state_packet.get("current_role_tool_observations") or []
+    attempted = state_packet.get("current_role_attempted_tec_tool_calls") or []
 
     lines = [
         f"- task: {parsed.get('task_type')} regions={parsed.get('region_ids') or parsed.get('region_id')} period=[{parsed.get('start')}, {parsed.get('end')})",
@@ -260,6 +270,9 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
         f"- high interval artifacts: {_format_handles(handles.get('high_intervals'))}",
         f"- stable interval artifacts: {_format_handles(handles.get('stable_intervals'))}",
         f"- comparison artifacts: {_format_handles(handles.get('comparison_id'))}",
+        f"- successful TEC calls in this role: {_format_successes(role_successes)}",
+        f"- recent observations in this role: {_format_observations(role_observations)}",
+        f"- attempted TEC calls in this role: {_format_attempts(attempted)}",
         f"- successful TEC calls: {_format_successes(state_packet.get('completed_successful_tool_calls') or [])}",
     ]
     if role == "data_agent":
@@ -267,7 +280,6 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
             [
                 f"- requested regions: {progress.get('requested_regions') or []}",
                 f"- covered regions: {progress.get('covered_regions') or []}",
-                f"- missing_regions: {progress.get('missing_regions') or []}",
                 f"- scope_covered: {bool(progress.get('scope_covered'))}",
             ]
         )
@@ -302,6 +314,38 @@ def _format_successes(calls: list[dict[str, Any]]) -> str:
             {
                 "tool": call.get("tool_name"),
                 "artifacts": call.get("returned_artifacts"),
+            }
+        )
+    return json.dumps(compact, ensure_ascii=False, sort_keys=True)
+
+
+def _format_observations(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return "[]"
+    compact = []
+    for item in items[-5:]:
+        compact.append(
+            {
+                "tool": item.get("tool_name"),
+                "status": item.get("status"),
+                "artifact_type": item.get("produced_artifact_type"),
+                "artifact_id": item.get("artifact_id"),
+                "summary": item.get("summary"),
+            }
+        )
+    return json.dumps(compact, ensure_ascii=False, sort_keys=True)
+
+
+def _format_attempts(calls: list[dict[str, Any]]) -> str:
+    if not calls:
+        return "[]"
+    compact = []
+    for call in calls[-5:]:
+        compact.append(
+            {
+                "tool": call.get("tool_name"),
+                "status": call.get("status"),
+                "arguments": call.get("arguments"),
             }
         )
     return json.dumps(compact, ensure_ascii=False, sort_keys=True)

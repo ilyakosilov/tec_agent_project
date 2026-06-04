@@ -53,8 +53,12 @@ class FunctionHandoffRoleOutput:
     final_answer: str = ""
     raw_model_outputs: list[str] = field(default_factory=list)
     cleaned_model_outputs: list[str] = field(default_factory=list)
+    llm_call_diagnostics: list[dict[str, Any]] = field(default_factory=list)
     role_steps: list[dict[str, Any]] = field(default_factory=list)
     tool_sequence: list[str] = field(default_factory=list)
+    attempted_tec_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    skipped_repeated_tec_tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    failed_tec_tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_observations: list[dict[str, Any]] = field(default_factory=list)
     parse_error_count: int = 0
     invalid_json_count: int = 0
@@ -64,6 +68,12 @@ class FunctionHandoffRoleOutput:
     multiple_function_blocks_in_single_output_count: int = 0
     invalid_artifact_handle_count: int = 0
     successful_final_tool_without_return_count: int = 0
+    data_agent_repeated_retrieval_after_all_assignment_series_present_count: int = 0
+    math_repeated_tool_after_terminal_artifact_count: int = 0
+    math_repeated_tool_after_new_intermediate_artifact_count: int = 0
+    math_failed_to_return_after_assignment_artifact_present_count: int = 0
+    math_recomputed_existing_region_stats_count: int = 0
+    math_assignment_completed_but_not_returned_count: int = 0
     tool_error_count: int = 0
     repair_attempt_count: int = 0
     stalled_loop_detected: bool = False
@@ -80,10 +90,18 @@ class LLMFunctionHandoffMultiAgentResult:
     orchestrator_decisions: list[dict[str, Any]]
     function_calls: list[dict[str, Any]]
     tool_observations: list[dict[str, Any]]
+    llm_call_diagnostics: list[dict[str, Any]]
     raw_model_outputs: list[str]
     cleaned_model_outputs: list[str]
     role_agent_order: list[str]
     actual_tool_sequence: list[str]
+    attempted_tec_tool_calls: list[dict[str, Any]]
+    attempted_tec_tool_sequence: list[str]
+    successful_tec_tool_sequence: list[str]
+    skipped_repeated_tec_tool_calls: list[dict[str, Any]]
+    failed_tec_tool_calls: list[dict[str, Any]]
+    handoff_function_sequence: list[str]
+    role_call_sequence: list[str]
     function_handoff_protocol_version: str
     architecture: str
     parse_error_count: int
@@ -92,14 +110,30 @@ class LLMFunctionHandoffMultiAgentResult:
     forbidden_function_call_count: int
     repeated_tool_call_count: int
     multiple_function_blocks_in_single_output_count: int
+    multiple_protocol_blocks_in_single_output_count: int
     invalid_artifact_handle_count: int
     repeated_role_message_count: int
+    orchestrator_equivalent_assignment_without_state_change_count: int
     successful_final_tool_without_return_count: int
+    data_agent_repeated_retrieval_after_all_assignment_series_present_count: int
+    math_repeated_tool_after_terminal_artifact_count: int
+    math_repeated_tool_after_new_intermediate_artifact_count: int
+    math_failed_to_return_after_assignment_artifact_present_count: int
+    math_recomputed_existing_region_stats_count: int
+    math_assignment_completed_but_not_returned_count: int
     tool_error_count: int
     stalled_loop_detected: bool
     repair_attempt_count: int
     retry_count: int
     success: bool
+    workflow_completed: bool
+    final_answer_present: bool
+    terminal_numeric_artifact_present: bool
+    numeric_match_with_gold: bool | None
+    findings_present: bool
+    analysis_agent_called: bool
+    report_agent_called: bool
+    failure_reason: str | None
     error_message: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -120,6 +154,7 @@ class LLMFunctionHandoffOrchestratorAgent:
         user_query: str,
         context: dict[str, Any],
         max_parse_retries: int,
+        orchestration_step: int,
     ) -> tuple[FunctionHandoffCall | None, dict[str, Any]]:
         diagnostics = _empty_diagnostics()
         messages = [
@@ -138,7 +173,7 @@ class LLMFunctionHandoffOrchestratorAgent:
                 ),
             },
         ]
-        for _ in range(max_parse_retries + 1):
+        for attempt in range(max_parse_retries + 1):
             raw = self.model.generate(
                 messages,
                 max_new_tokens=self.max_new_tokens,
@@ -146,8 +181,19 @@ class LLMFunctionHandoffOrchestratorAgent:
                 do_sample=self.temperature > 0,
             )
             parsed = parse_function_handoff_output(raw)
+            call_diagnostics = build_llm_call_diagnostics(
+                model=self.model,
+                messages=messages,
+                raw_output=raw,
+                cleaned_output=parsed.cleaned_text,
+                caller_role="orchestrator",
+                orchestration_step=orchestration_step,
+                role_step=None,
+                attempt=attempt + 1,
+            )
             diagnostics["raw_model_outputs"].append(raw)
             diagnostics["cleaned_model_outputs"].append(parsed.cleaned_text)
+            diagnostics["llm_call_diagnostics"].append(call_diagnostics)
             if parsed.block_count > 1:
                 diagnostics["multiple_function_blocks_in_single_output_count"] += 1
             if parsed.ok and parsed.call is not None:
@@ -213,23 +259,31 @@ class LLMFunctionHandoffRoleAgent:
         user_query: str,
         message: str,
         context: dict[str, Any],
+        orchestration_step: int,
     ) -> FunctionHandoffRoleOutput:
         output = FunctionHandoffRoleOutput(role=self.role)
+        current_role_successful_tool_calls: list[dict[str, Any]] = []
+        current_role_tool_observations: list[dict[str, Any]] = []
+        current_role_attempted_tec_tool_calls: list[dict[str, Any]] = []
+
+        def state_message() -> str:
+            return build_function_handoff_state_message(
+                role=self.role,
+                user_query=user_query,
+                state_packet=build_function_handoff_state_packet(
+                    user_query=user_query,
+                    current_role=self.role,
+                    current_message=message,
+                    context=context,
+                    current_role_successful_tool_calls=current_role_successful_tool_calls,
+                    current_role_tool_observations=current_role_tool_observations,
+                    current_role_attempted_tec_tool_calls=current_role_attempted_tec_tool_calls,
+                ),
+            )
+
         messages = [
             {"role": "system", "content": build_function_handoff_role_prompt(self.role)},
-            {
-                "role": "user",
-                "content": build_function_handoff_state_message(
-                    role=self.role,
-                    user_query=user_query,
-                    state_packet=build_function_handoff_state_packet(
-                        user_query=user_query,
-                        current_role=self.role,
-                        current_message=message,
-                        context=context,
-                    ),
-                ),
-            },
+            {"role": "user", "content": state_message()},
         ]
         consecutive_parse_errors = 0
         tool_call_count = 0
@@ -243,14 +297,26 @@ class LLMFunctionHandoffRoleAgent:
                 do_sample=self.temperature > 0,
             )
             parsed = parse_function_handoff_output(raw)
+            call_diagnostics = build_llm_call_diagnostics(
+                model=self.model,
+                messages=messages,
+                raw_output=raw,
+                cleaned_output=parsed.cleaned_text,
+                caller_role=self.role,
+                orchestration_step=orchestration_step,
+                role_step=step,
+                attempt=1,
+            )
             output.raw_model_outputs.append(raw)
             output.cleaned_model_outputs.append(parsed.cleaned_text)
+            output.llm_call_diagnostics.append(call_diagnostics)
             if parsed.block_count > 1:
                 output.multiple_function_blocks_in_single_output_count += 1
             role_step: dict[str, Any] = {
                 "step": step,
                 "raw_model_output": raw,
                 "cleaned_model_output": parsed.cleaned_text,
+                "llm_call_diagnostics": call_diagnostics,
                 "parse_ok": parsed.ok,
             }
             if not parsed.ok or parsed.call is None:
@@ -333,13 +399,30 @@ class LLMFunctionHandoffRoleAgent:
                 output.role_steps.append(role_step)
                 continue
 
+            attempted_call = {
+                "role": self.role,
+                "role_step": step,
+                "tool_name": call.name,
+                "arguments": dict(call.arguments),
+                "status": "parsed",
+            }
+            context.setdefault("function_attempted_tec_tool_calls", []).append(attempted_call)
+            output.attempted_tec_tool_calls.append(attempted_call)
+            current_role_attempted_tec_tool_calls.append(attempted_call)
+            role_step["attempted_tec_tool_call"] = attempted_call
+
             if previous_successful_final_tool:
                 output.successful_final_tool_without_return_count += 1
                 role_step["final_tool_return_expected"] = True
+                if self.role == "math_agent":
+                    output.math_failed_to_return_after_assignment_artifact_present_count += 1
+                    output.math_assignment_completed_but_not_returned_count += 1
 
             if call.name not in self.client.list_tool_names():
                 output.invalid_function_name_count += 1
                 role_step["function_status"] = "unregistered_tool"
+                attempted_call["status"] = "unregistered_tool"
+                output.failed_tec_tool_calls.append(attempted_call)
                 output.role_steps.append(role_step)
                 messages.append(
                     {
@@ -358,6 +441,9 @@ class LLMFunctionHandoffRoleAgent:
                 output.invalid_artifact_handle_count += 1
                 role_step["function_status"] = "invalid_artifact_handle"
                 role_step["error_message"] = invalid_handle_error
+                attempted_call["status"] = "invalid_artifact_handle"
+                output.failed_tec_tool_calls.append(attempted_call)
+                context.setdefault("function_failed_tec_tool_calls", []).append(attempted_call)
                 observation = make_function_tool_observation(
                     tool_name=call.name,
                     status="error",
@@ -370,6 +456,7 @@ class LLMFunctionHandoffRoleAgent:
                 )
                 role_step["observation"] = observation
                 context.setdefault("function_tool_observations", []).append(observation)
+                current_role_tool_observations.append(observation)
                 context.setdefault("function_runtime_feedback", []).append(
                     {
                         "kind": "invalid_artifact_handle",
@@ -387,16 +474,7 @@ class LLMFunctionHandoffRoleAgent:
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_function_handoff_state_message(
-                            role=self.role,
-                            user_query=user_query,
-                            state_packet=build_function_handoff_state_packet(
-                                user_query=user_query,
-                                current_role=self.role,
-                                current_message=message,
-                                context=context,
-                            ),
-                        ),
+                        "content": state_message(),
                     }
                 )
                 continue
@@ -406,6 +484,29 @@ class LLMFunctionHandoffRoleAgent:
             if key in successful_keys:
                 output.repeated_tool_call_count += 1
                 role_step["function_status"] = "skipped_repeated"
+                attempted_call["status"] = "skipped_repeated"
+                output.skipped_repeated_tec_tool_calls.append(attempted_call)
+                context.setdefault("function_skipped_repeated_tec_tool_calls", []).append(
+                    attempted_call
+                )
+                if self.role == "data_agent" and call.name == "tec_get_timeseries":
+                    progress = assignment_progress_for_role(self.role, context)
+                    if progress.get("scope_covered"):
+                        output.data_agent_repeated_retrieval_after_all_assignment_series_present_count += 1
+                        role_step[
+                            "data_agent_repeated_retrieval_after_all_assignment_series_present"
+                        ] = True
+                if self.role == "math_agent":
+                    if _terminal_numeric_artifact_present(context):
+                        output.math_repeated_tool_after_terminal_artifact_count += 1
+                        role_step["math_repeated_tool_after_terminal_artifact"] = True
+                    elif call.name in {
+                        "tec_compute_series_stats",
+                        "tec_compute_high_threshold",
+                        "tec_compute_stability_thresholds",
+                    }:
+                        output.math_repeated_tool_after_new_intermediate_artifact_count += 1
+                        role_step["math_repeated_tool_after_new_intermediate_artifact"] = True
                 output.role_steps.append(role_step)
                 context.setdefault("function_runtime_feedback", []).append(
                     {
@@ -427,16 +528,7 @@ class LLMFunctionHandoffRoleAgent:
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_function_handoff_state_message(
-                            role=self.role,
-                            user_query=user_query,
-                            state_packet=build_function_handoff_state_packet(
-                                user_query=user_query,
-                                current_role=self.role,
-                                current_message=message,
-                                context=context,
-                            ),
-                        ),
+                        "content": state_message(),
                     }
                 )
                 continue
@@ -444,10 +536,17 @@ class LLMFunctionHandoffRoleAgent:
             if tool_call_count >= self.max_tool_calls:
                 output.status = "failed"
                 output.message = f"Exceeded max_tool_calls={self.max_tool_calls}."
+                attempted_call["status"] = "max_tool_calls_exceeded"
+                output.failed_tec_tool_calls.append(attempted_call)
                 output.role_steps.append(role_step)
                 return output
 
             tool_call_count += 1
+            if self.role == "math_agent" and call.name == "tec_compute_series_stats":
+                series_id = call.arguments.get("series_id")
+                if isinstance(series_id, str) and _stats_exists_for_series(context, series_id):
+                    output.math_recomputed_existing_region_stats_count += 1
+                    role_step["math_recomputed_existing_region_stats"] = True
             response = self.client.call_tool(
                 call.name,
                 call.arguments,
@@ -466,10 +565,15 @@ class LLMFunctionHandoffRoleAgent:
                 error=response.error,
             )
             context.setdefault("function_tool_observations", []).append(observation)
+            current_role_tool_observations.append(observation)
             output.tool_observations.append(observation)
             if response.status != "ok":
                 output.tool_error_count += 1
+                attempted_call["status"] = response.status
+                output.failed_tec_tool_calls.append(attempted_call)
+                context.setdefault("function_failed_tec_tool_calls", []).append(attempted_call)
             if response.status == "ok" and response.result is not None:
+                attempted_call["status"] = "ok"
                 successful_keys.add(key)
                 output.tool_sequence.append(call.name)
                 previous_successful_final_tool = is_final_like_tool(call.name)
@@ -480,19 +584,13 @@ class LLMFunctionHandoffRoleAgent:
                     arguments=call.arguments,
                     tool_response=response_dict,
                 )
+                success_record = _last_item(context.get("completed_tool_calls") or [])
+                if isinstance(success_record, dict):
+                    current_role_successful_tool_calls.append(success_record)
             messages.append(
                 {
                     "role": "user",
-                    "content": build_function_handoff_state_message(
-                        role=self.role,
-                        user_query=user_query,
-                        state_packet=build_function_handoff_state_packet(
-                            user_query=user_query,
-                            current_role=self.role,
-                            current_message=message,
-                            context=context,
-                        ),
-                    ),
+                    "content": state_message(),
                 }
             )
 
@@ -541,12 +639,16 @@ class LLMFunctionHandoffMultiAgent:
         context["function_handoffs"] = []
         context["function_tool_observations"] = []
         context["function_runtime_feedback"] = []
+        context["function_attempted_tec_tool_calls"] = []
+        context["function_skipped_repeated_tec_tool_calls"] = []
+        context["function_failed_tec_tool_calls"] = []
 
         counters = _empty_global_counters()
         orchestration_steps: list[dict[str, Any]] = []
         role_outputs: list[dict[str, Any]] = []
         orchestrator_decisions: list[dict[str, Any]] = []
         function_calls: list[dict[str, Any]] = []
+        llm_call_diagnostics: list[dict[str, Any]] = []
         raw_model_outputs: list[str] = []
         cleaned_model_outputs: list[str] = []
         role_agent_order: list[str] = []
@@ -557,8 +659,10 @@ class LLMFunctionHandoffMultiAgent:
                 user_query=query,
                 context=context,
                 max_parse_retries=self.max_parse_retries,
+                orchestration_step=step,
             )
             _accumulate_diagnostics(counters, diagnostics)
+            llm_call_diagnostics.extend(diagnostics.get("llm_call_diagnostics") or [])
             raw_model_outputs.extend(diagnostics.get("raw_model_outputs") or [])
             cleaned_model_outputs.extend(diagnostics.get("cleaned_model_outputs") or [])
             if call is None:
@@ -569,9 +673,14 @@ class LLMFunctionHandoffMultiAgent:
                 error_message = f"Orchestrator selected invalid function {call.name!r}."
                 break
             message = str(call.arguments.get("message") or "")
-            role_message_key = (role, " ".join(message.lower().split()))
+            role_message_key = (
+                role,
+                " ".join(message.lower().split()),
+                _artifact_state_signature(context),
+            )
             if role_message_key in context.setdefault("function_role_message_keys", set()):
                 counters["repeated_role_message_count"] += 1
+                counters["orchestrator_equivalent_assignment_without_state_change_count"] += 1
                 context.setdefault("function_runtime_feedback", []).append(
                     {
                         "kind": "repeated_role_message",
@@ -620,8 +729,10 @@ class LLMFunctionHandoffMultiAgent:
                 user_query=query,
                 message=message,
                 context=context,
+                orchestration_step=step,
             )
             _accumulate_role_output(counters, role_output)
+            llm_call_diagnostics.extend(role_output.llm_call_diagnostics)
             raw_model_outputs.extend(role_output.raw_model_outputs)
             cleaned_model_outputs.extend(role_output.cleaned_model_outputs)
             role_agent_order.append(role)
@@ -668,6 +779,18 @@ class LLMFunctionHandoffMultiAgent:
         tool_results = build_multi_agent_tool_results(context)
         answer = context.get("final_answer") or ""
         success = bool(answer)
+        terminal_numeric_artifact_present = _terminal_numeric_artifact_present(context)
+        findings_present = bool((context.get("analysis_artifacts") or {}).get("findings"))
+        analysis_agent_called = "analysis_agent" in role_agent_order
+        report_agent_called = "report_agent" in role_agent_order
+        attempted_tec_tool_calls = list(context.get("function_attempted_tec_tool_calls") or [])
+        skipped_repeated = list(context.get("function_skipped_repeated_tec_tool_calls") or [])
+        failed_tec = list(context.get("function_failed_tec_tool_calls") or [])
+        handoff_function_sequence = [
+            str(item.get("function_name"))
+            for item in function_calls
+            if item.get("caller") == "orchestrator" and item.get("function_name")
+        ]
 
         return LLMFunctionHandoffMultiAgentResult(
             answer=answer,
@@ -679,10 +802,20 @@ class LLMFunctionHandoffMultiAgent:
             orchestrator_decisions=orchestrator_decisions,
             function_calls=function_calls,
             tool_observations=list(context.get("function_tool_observations") or []),
+            llm_call_diagnostics=llm_call_diagnostics,
             raw_model_outputs=raw_model_outputs,
             cleaned_model_outputs=cleaned_model_outputs,
             role_agent_order=role_agent_order,
             actual_tool_sequence=actual_tool_sequence,
+            attempted_tec_tool_calls=attempted_tec_tool_calls,
+            attempted_tec_tool_sequence=[
+                str(item.get("tool_name")) for item in attempted_tec_tool_calls
+            ],
+            successful_tec_tool_sequence=actual_tool_sequence,
+            skipped_repeated_tec_tool_calls=skipped_repeated,
+            failed_tec_tool_calls=failed_tec,
+            handoff_function_sequence=handoff_function_sequence,
+            role_call_sequence=role_agent_order,
             function_handoff_protocol_version=FUNCTION_HANDOFF_PROTOCOL_VERSION,
             architecture=ARCHITECTURE_NAME,
             parse_error_count=counters["parse_error_count"],
@@ -693,16 +826,48 @@ class LLMFunctionHandoffMultiAgent:
             multiple_function_blocks_in_single_output_count=counters[
                 "multiple_function_blocks_in_single_output_count"
             ],
+            multiple_protocol_blocks_in_single_output_count=counters[
+                "multiple_function_blocks_in_single_output_count"
+            ],
             invalid_artifact_handle_count=counters["invalid_artifact_handle_count"],
             repeated_role_message_count=counters["repeated_role_message_count"],
+            orchestrator_equivalent_assignment_without_state_change_count=counters[
+                "orchestrator_equivalent_assignment_without_state_change_count"
+            ],
             successful_final_tool_without_return_count=counters[
                 "successful_final_tool_without_return_count"
+            ],
+            data_agent_repeated_retrieval_after_all_assignment_series_present_count=counters[
+                "data_agent_repeated_retrieval_after_all_assignment_series_present_count"
+            ],
+            math_repeated_tool_after_terminal_artifact_count=counters[
+                "math_repeated_tool_after_terminal_artifact_count"
+            ],
+            math_repeated_tool_after_new_intermediate_artifact_count=counters[
+                "math_repeated_tool_after_new_intermediate_artifact_count"
+            ],
+            math_failed_to_return_after_assignment_artifact_present_count=counters[
+                "math_failed_to_return_after_assignment_artifact_present_count"
+            ],
+            math_recomputed_existing_region_stats_count=counters[
+                "math_recomputed_existing_region_stats_count"
+            ],
+            math_assignment_completed_but_not_returned_count=counters[
+                "math_assignment_completed_but_not_returned_count"
             ],
             tool_error_count=counters["tool_error_count"],
             stalled_loop_detected=bool(counters["stalled_loop_detected"]),
             repair_attempt_count=counters["repair_attempt_count"],
             retry_count=counters["repair_attempt_count"],
             success=success,
+            workflow_completed=success,
+            final_answer_present=bool(answer),
+            terminal_numeric_artifact_present=terminal_numeric_artifact_present,
+            numeric_match_with_gold=None,
+            findings_present=findings_present,
+            analysis_agent_called=analysis_agent_called,
+            report_agent_called=report_agent_called,
+            failure_reason=None if success else error_message,
             error_message=None if success else error_message,
         )
 
@@ -713,6 +878,9 @@ def build_function_handoff_state_packet(
     current_role: str,
     current_message: str,
     context: dict[str, Any],
+    current_role_successful_tool_calls: list[dict[str, Any]] | None = None,
+    current_role_tool_observations: list[dict[str, Any]] | None = None,
+    current_role_attempted_tec_tool_calls: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     available_artifacts = summarize_available_artifacts(context)
     return {
@@ -723,6 +891,11 @@ def build_function_handoff_state_packet(
         "available_artifacts": available_artifacts,
         "runtime_visible_handles": runtime_visible_handles(context),
         "assignment_progress": assignment_progress_for_role(current_role, context),
+        "current_role_successful_tool_calls": list(current_role_successful_tool_calls or []),
+        "current_role_tool_observations": list(current_role_tool_observations or []),
+        "current_role_attempted_tec_tool_calls": list(
+            current_role_attempted_tec_tool_calls or []
+        ),
         "last_role_return": _last_item(context.get("function_role_returns") or []),
         "runtime_feedback": list(context.get("function_runtime_feedback") or [])[-4:],
         "previous_role_returns": list(context.get("function_role_returns") or [])[-8:],
@@ -876,12 +1049,11 @@ def assignment_progress_for_role(role: str, context: dict[str, Any]) -> dict[str
         ).items()
         if item.get("series_id")
     }
-    missing = [region for region in requested if region not in covered]
     progress: dict[str, Any] = {
         "requested_regions": requested,
         "covered_regions": [region for region in requested if region in covered],
-        "missing_regions": missing,
-        "scope_covered": bool(requested) and not missing,
+        "scope_covered": bool(requested)
+        and all(region in covered for region in requested),
     }
     if role == "math_agent":
         progress["visible_input_handles"] = runtime_visible_handles(context)
@@ -1076,6 +1248,131 @@ def is_final_like_tool(tool_name: str) -> bool:
     }
 
 
+def _stats_exists_for_series(context: dict[str, Any], series_id: str) -> bool:
+    for item in ((context.get("math_artifacts") or {}).get("stats_by_region") or {}).values():
+        if str(item.get("series_id") or "") == series_id and item.get("stats_id"):
+            return True
+    return False
+
+
+def _terminal_numeric_artifact_present(context: dict[str, Any]) -> bool:
+    parsed = context.get("parsed_task") or {}
+    task_type = parsed.get("task_type")
+    math = context.get("math_artifacts") or {}
+    if task_type == "high_tec":
+        return any(
+            bool((item or {}).get("intervals"))
+            for item in (math.get("high_tec") or {}).values()
+        )
+    if task_type == "stable_intervals":
+        return any(
+            bool((item or {}).get("intervals"))
+            for item in (math.get("stable_intervals") or {}).values()
+        )
+    if task_type == "compare_regions":
+        return bool((math.get("comparison") or {}).get("comparison_id"))
+    if task_type == "report":
+        region_ids = requested_regions_from_task(parsed)
+        stats = math.get("stats_by_region") or {}
+        high = math.get("high_tec") or {}
+        stable = math.get("stable_intervals") or {}
+        return bool(region_ids) and all(
+            region in stats
+            and bool((high.get(region) or {}).get("intervals"))
+            and bool((stable.get(region) or {}).get("intervals"))
+            for region in region_ids
+        )
+    return False
+
+
+def _artifact_state_signature(context: dict[str, Any]) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    handles = runtime_visible_handles(context)
+    signature: list[tuple[str, tuple[str, ...]]] = []
+    for key in sorted(handles):
+        ids: list[str] = []
+        for item in handles.get(key) or []:
+            artifact_id = item.get("id") or item.get("threshold_id") or item.get("region_id")
+            if artifact_id is not None:
+                ids.append(str(artifact_id))
+        signature.append((key, tuple(sorted(ids))))
+    return tuple(signature)
+
+
+def build_llm_call_diagnostics(
+    *,
+    model,
+    messages: list[dict[str, str]],
+    raw_output: str,
+    cleaned_output: str,
+    caller_role: str,
+    orchestration_step: int | None,
+    role_step: int | None,
+    attempt: int,
+) -> dict[str, Any]:
+    """Return compact prompt/generation diagnostics without storing full prompts."""
+
+    prompt = _render_prompt_for_diagnostics(model, messages)
+    before_tokens = _count_tokens(model, prompt)
+    max_input_tokens = getattr(model, "max_input_tokens", None)
+    after_tokens = (
+        min(before_tokens, int(max_input_tokens))
+        if isinstance(before_tokens, int) and isinstance(max_input_tokens, int)
+        else before_tokens
+    )
+    raw = str(raw_output or "")
+    first_tool_index = raw.lower().find("<tool_call")
+    return {
+        "caller_role": caller_role,
+        "orchestration_step": orchestration_step,
+        "role_step": role_step,
+        "attempt": attempt,
+        "prompt_character_count": len(prompt),
+        "prompt_token_count_before_truncation": before_tokens,
+        "prompt_token_count_after_truncation": after_tokens,
+        "prompt_was_truncated": (
+            bool(isinstance(before_tokens, int) and isinstance(after_tokens, int) and before_tokens > after_tokens)
+        ),
+        "generated_token_count": _count_tokens(model, raw, add_special_tokens=False),
+        "raw_output_had_prefix_before_tool_call": bool(first_tool_index > 0 and raw[:first_tool_index].strip()),
+        "output_cleaning_applied": str(cleaned_output or "").strip() != raw.strip(),
+        "prompt_tail_preview": prompt[-500:],
+    }
+
+
+def _render_prompt_for_diagnostics(model, messages: list[dict[str, str]]) -> str:
+    renderer = getattr(model, "_render_prompt", None)
+    if callable(renderer):
+        try:
+            return str(renderer(messages))
+        except Exception:
+            pass
+    chunks = []
+    for message in messages:
+        chunks.append(f"{message.get('role', 'user')}: {message.get('content', '')}")
+    chunks.append("assistant:")
+    return "\n\n".join(chunks)
+
+
+def _count_tokens(model, text: str, *, add_special_tokens: bool = True) -> int | None:
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is None:
+        return None
+    try:
+        encoded = tokenizer(
+            str(text or ""),
+            add_special_tokens=add_special_tokens,
+            truncation=False,
+        )
+    except Exception:
+        return None
+    input_ids = encoded.get("input_ids") if isinstance(encoded, dict) else None
+    if input_ids is None:
+        return None
+    if input_ids and isinstance(input_ids[0], list):
+        return len(input_ids[0])
+    return len(input_ids)
+
+
 def _last_item(items: list[Any]) -> Any:
     return items[-1] if items else None
 
@@ -1084,6 +1381,7 @@ def _empty_diagnostics() -> dict[str, Any]:
     return {
         "raw_model_outputs": [],
         "cleaned_model_outputs": [],
+        "llm_call_diagnostics": [],
         "parse_error_count": 0,
         "invalid_json_count": 0,
         "invalid_function_name_count": 0,
@@ -1103,7 +1401,14 @@ def _empty_global_counters() -> dict[str, int]:
         "multiple_function_blocks_in_single_output_count": 0,
         "invalid_artifact_handle_count": 0,
         "repeated_role_message_count": 0,
+        "orchestrator_equivalent_assignment_without_state_change_count": 0,
         "successful_final_tool_without_return_count": 0,
+        "data_agent_repeated_retrieval_after_all_assignment_series_present_count": 0,
+        "math_repeated_tool_after_terminal_artifact_count": 0,
+        "math_repeated_tool_after_new_intermediate_artifact_count": 0,
+        "math_failed_to_return_after_assignment_artifact_present_count": 0,
+        "math_recomputed_existing_region_stats_count": 0,
+        "math_assignment_completed_but_not_returned_count": 0,
         "tool_error_count": 0,
         "stalled_loop_detected": 0,
         "repair_attempt_count": 0,
@@ -1150,6 +1455,12 @@ def _accumulate_role_output(
         "multiple_function_blocks_in_single_output_count",
         "invalid_artifact_handle_count",
         "successful_final_tool_without_return_count",
+        "data_agent_repeated_retrieval_after_all_assignment_series_present_count",
+        "math_repeated_tool_after_terminal_artifact_count",
+        "math_repeated_tool_after_new_intermediate_artifact_count",
+        "math_failed_to_return_after_assignment_artifact_present_count",
+        "math_recomputed_existing_region_stats_count",
+        "math_assignment_completed_but_not_returned_count",
         "tool_error_count",
         "repair_attempt_count",
     ]:

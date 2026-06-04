@@ -134,6 +134,7 @@ def main() -> None:
         test_stable_success()
         test_compare_success()
         test_invented_handle_failure()
+        test_terminal_repeat_diagnostics()
     finally:
         if dataset_path.exists():
             dataset_path.unlink()
@@ -167,6 +168,19 @@ def test_high_success() -> None:
     assert result.invalid_artifact_handle_count == 0
     assert result.successful_final_tool_without_return_count == 0
     assert result.stalled_loop_detected is False
+    assert result.workflow_completed is True
+    assert result.final_answer_present is True
+    assert result.terminal_numeric_artifact_present is True
+    assert result.successful_tec_tool_sequence == result.actual_tool_sequence
+    assert result.attempted_tec_tool_sequence == result.actual_tool_sequence
+    assert result.handoff_function_sequence == [
+        "call_data_agent",
+        "call_math_agent",
+        "call_analysis_agent",
+        "call_report_agent",
+    ]
+    assert result.llm_call_diagnostics
+    assert result.llm_call_diagnostics[0]["caller_role"] == "orchestrator"
 
 
 def test_stable_success() -> None:
@@ -218,6 +232,27 @@ def test_invented_handle_failure() -> None:
     assert result.invalid_artifact_handle_count == 1, result.to_dict()
     assert result.actual_tool_sequence == []
     assert "midlat_europe_2024-03-01_2024-04-01" not in str(result.trace.get("calls"))
+    assert result.failed_tec_tool_calls
+
+
+def test_terminal_repeat_diagnostics() -> None:
+    server = build_local_mcp_server(run_id="smoke_function_handoff_terminal_repeat")
+    result = _run_fake(
+        TerminalRepeatFakeModel(),
+        server,
+        "Find high TEC intervals for midlat_europe from 2024-03-01 to 2024-04-01.",
+        max_orchestration_steps=3,
+        max_role_steps=6,
+    )
+    assert result.success is False
+    assert result.terminal_numeric_artifact_present is True
+    assert result.repeated_tool_call_count == 2, result.to_dict()
+    assert result.successful_final_tool_without_return_count >= 2
+    assert result.math_repeated_tool_after_terminal_artifact_count >= 2
+    assert result.math_failed_to_return_after_assignment_artifact_present_count >= 2
+    assert result.math_assignment_completed_but_not_returned_count >= 2
+    assert result.skipped_repeated_tec_tool_calls
+    assert result.attempted_tec_tool_sequence.count("tec_detect_high_intervals") >= 3
 
 
 def _run_fake(
@@ -338,6 +373,36 @@ class InventedHandleFakeModel(FakeFunctionHandoffChatModel):
         return (
             '<tool_call>{"name":"return_to_orchestrator","arguments":'
             '{"status":"cannot_complete","message":"no visible handles"}}</tool_call>'
+        )
+
+
+class TerminalRepeatFakeModel(FakeFunctionHandoffChatModel):
+    def _orchestrator(self) -> str:
+        self.orchestrator_calls += 1
+        if self.orchestrator_calls == 1:
+            return (
+                '<tool_call>{"name":"call_data_agent","arguments":'
+                '{"message":"Prepare TEC time series for midlat_europe."}}</tool_call>'
+            )
+        return (
+            '<tool_call>{"name":"call_math_agent","arguments":'
+            '{"message":"Compute high TEC intervals."}}</tool_call>'
+        )
+
+    def _math(self, visible: str) -> str:
+        self.role_calls["math_agent"] += 1
+        series_id = _last_match(r"series_[A-Za-z0-9_]+", visible)
+        if self.role_calls["math_agent"] == 1:
+            return (
+                '<tool_call>{"name":"tec_compute_high_threshold","arguments":'
+                f'{{"series_id":"{series_id}","q":0.9}}'
+                "}</tool_call>"
+            )
+        threshold_id = _last_match(r"thr_[A-Za-z0-9_]+", visible)
+        return (
+            '<tool_call>{"name":"tec_detect_high_intervals","arguments":'
+            f'{{"series_id":"{series_id}","threshold_id":"{threshold_id}"}}'
+            "}</tool_call>"
         )
 
 

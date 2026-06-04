@@ -14,7 +14,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 NOTEBOOK_PATH = (
     PROJECT_ROOT
     / "notebooks"
-    / "07_qwen_multi_agent_function_handoff_qwen35_4b_colab.ipynb"
+    / "08_qwen_multi_agent_function_handoff_grounded_completion_v3_qwen35_4b_colab.ipynb"
 )
 SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
@@ -35,7 +35,7 @@ EXPECTED_PRESETS = {
 def main() -> None:
     assert NOTEBOOK_PATH.exists(), f"Notebook not found: {NOTEBOOK_PATH}"
     text = NOTEBOOK_PATH.read_text(encoding="utf-8")
-    for marker in ["<<<<<<<", "=======", ">>>>>>>"]:
+    for marker in ["<<<<<<<", ">>>>>>>", "\n=======\n"]:
         assert marker not in text
 
     data = json.loads(text)
@@ -57,11 +57,26 @@ def main() -> None:
     assert "compare_agent_to_gold" in all_text
     assert 'ARCHITECTURE_MODE = "qwen_multi_agent_function_handoff_full_llm"' in all_text
     assert 'FUNCTION_HANDOFF_PROTOCOL_VERSION = "function_handoff_v1"' in all_text
-    assert 'PROMPT_REVISION = "function_handoff_grounded_state_v2"' in all_text
-    assert 'EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / "experiment_6_function_handoff_v2"' in all_text
-    assert "qwen_multi_agent_function_handoff_v2_batch_colab.json" in all_text
-    assert "qwen_multi_agent_function_handoff_v2_{preset_id}_colab.json" in all_text
-    assert "outputs\" / \"metrics\" / \"real_runs\" / \"multi_agent\"" in all_text
+    assert 'PROMPT_REVISION = "function_handoff_grounded_completion_state_v3"' in all_text
+    assert (
+        'EXPERIMENT_ID = "experiment_function_handoff_grounded_completion_v3_qwen35_4b"'
+        in all_text
+    )
+    assert (
+        'EXPERIMENT_OUTPUT_DIR = OUTPUT_ROOT / "experiment_function_handoff_grounded_completion_v3_qwen35_4b"'
+        in all_text
+    )
+    assert (
+        "qwen_multi_agent_function_handoff_grounded_completion_v3_batch_colab.json"
+        in all_text
+    )
+    assert (
+        "qwen_multi_agent_function_handoff_grounded_completion_v3_{preset_id}_colab.json"
+        in all_text
+    )
+    assert 'OUTPUT_ROOT = PROJECT_DIR / "outputs" / "metrics"' in all_text
+    assert "RUN_ALL_TASKS = False" in all_text
+    assert 'SELECTED_PRESET = "hightec_midlat_europe"' in all_text
     assert "tec_build_report" not in all_text
     assert "tec_compare_regions" not in all_text
     assert "deterministic baseline trace" not in all_text
@@ -70,8 +85,9 @@ def main() -> None:
     first_code = next(
         _source(cell) for cell in data["cells"] if cell.get("cell_type") == "code"
     )
+    assert "transformers @ git+https://github.com/huggingface/transformers.git@main" in first_code
     assert "Pillow==12.2.0" in first_code
-    assert "Runtime \u2192 Restart session" in first_code
+    assert "Runtime -> Restart session" in first_code
 
     configs = get_five_task_configs()
     assert {item["preset_id"] for item in configs} == EXPECTED_PRESETS
@@ -116,9 +132,13 @@ def main() -> None:
         'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_typed_batch_colab.json"',
         'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_typed_v2_batch_colab.json"',
         'BATCH_OUTPUT_PATH = EXPERIMENT_OUTPUT_DIR / "qwen_multi_agent_typed_v3_batch_colab.json"',
+        'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_function_handoff_v2_batch_colab.json"',
+        'BATCH_OUTPUT_PATH = OUTPUT_DIR / "qwen_multi_agent_function_handoff_batch_colab.json"',
         'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_typed_{preset_id}_colab.json"',
         'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_typed_v2_{preset_id}_colab.json"',
         'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_typed_v3_{preset_id}_colab.json"',
+        'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_function_handoff_v2_{preset_id}_colab.json"',
+        'PER_TASK_OUTPUT_TEMPLATE = "qwen_multi_agent_function_handoff_{preset_id}_colab.json"',
     ]
     for assignment in forbidden_output_assignments:
         assert assignment not in all_text
@@ -127,11 +147,19 @@ def main() -> None:
         "invalid_function_name_count",
         "forbidden_function_call_count",
         "multiple_function_blocks_in_single_output_count",
+        "multiple_protocol_blocks_in_single_output_count",
         "invalid_artifact_handle_count",
         "repeated_role_message_count",
         "successful_final_tool_without_return_count",
+        "data_agent_repeated_retrieval_after_all_assignment_series_present_count",
+        "math_repeated_tool_after_terminal_artifact_count",
+        "math_assignment_completed_but_not_returned_count",
+        "llm_call_diagnostics",
+        "terminal_numeric_artifact_present",
+        "workflow_completed",
         "role_agent_order",
         "actual_tool_sequence",
+        "attempted_tec_tool_sequence",
         "final_answer_present",
     ]:
         assert column in all_text
