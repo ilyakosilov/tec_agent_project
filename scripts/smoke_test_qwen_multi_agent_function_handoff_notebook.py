@@ -78,7 +78,7 @@ def main() -> None:
         'OUTPUT_ROOT = PROJECT_DIR / "outputs" / "metrics" / "real_runs" / "multi_agent"'
         in all_text
     )
-    assert "RUN_ALL_TASKS = False" in all_text
+    assert "RUN_ALL_TASKS = True" in all_text
     assert 'SELECTED_PRESET = "hightec_midlat_europe"' in all_text
     assert "model.tokenizer.truncation_side = \"left\"" in all_text
     assert "tec_build_report" not in all_text
