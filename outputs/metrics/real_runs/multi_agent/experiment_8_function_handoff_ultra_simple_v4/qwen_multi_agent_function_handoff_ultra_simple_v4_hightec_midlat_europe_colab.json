@@ -301,7 +301,7 @@
       "n_calls": 3,
       "calls": [
         {
-          "call_id": "call_c3b1ab9d1a",
+          "call_id": "call_0e57612b51",
           "tool_name": "tec_get_timeseries",
           "arguments": {
             "dataset_ref": "default",
@@ -311,7 +311,7 @@
             "start": "2024-03-01"
           },
           "status": "ok",
-          "latency_sec": 0.10752834200002326,
+          "latency_sec": 0.11031478199993217,
           "output": {
             "series_id": "series_ee29defe20",
             "metadata": {
@@ -344,7 +344,7 @@
           "step": 1
         },
         {
-          "call_id": "call_0fbc8c83be",
+          "call_id": "call_ec2822a02f",
           "tool_name": "tec_compute_high_threshold",
           "arguments": {
             "method": "quantile",
@@ -353,7 +353,7 @@
             "value": null
           },
           "status": "ok",
-          "latency_sec": 0.0014932490000774123,
+          "latency_sec": 0.001707411999973374,
           "output": {
             "threshold_id": "thr_66de044368",
             "series_id": "series_ee29defe20",
@@ -369,7 +369,7 @@
           "step": 1
         },
         {
-          "call_id": "call_dbea37e679",
+          "call_id": "call_91a49210b7",
           "tool_name": "tec_detect_high_intervals",
           "arguments": {
             "merge_gap_minutes": 0.0,
@@ -378,7 +378,7 @@
             "threshold_id": "thr_66de044368"
           },
           "status": "ok",
-          "latency_sec": 0.027356489999988298,
+          "latency_sec": 0.02468442099996082,
           "output": {
             "series_id": "series_ee29defe20",
             "threshold_id": "thr_66de044368",
@@ -1987,7 +1987,7 @@
     "single_agent_tool_retry_used": false,
     "tool_call_count": 3,
     "tool_error_count": 0,
-    "total_tool_latency_sec": 0.13637808100008897,
+    "total_tool_latency_sec": 0.13670661499986636,
     "tool_sequence": [
       "tec_get_timeseries",
       "tec_compute_high_threshold",
