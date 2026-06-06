@@ -114,6 +114,7 @@ class LLMFunctionHandoffMultiAgentResult:
     invalid_artifact_handle_count: int
     repeated_role_message_count: int
     orchestrator_equivalent_assignment_without_state_change_count: int
+    orchestrator_free_text_ignored_count: int
     successful_final_tool_without_return_count: int
     data_agent_repeated_retrieval_after_all_assignment_series_present_count: int
     math_repeated_tool_after_terminal_artifact_count: int
@@ -157,23 +158,23 @@ class LLMFunctionHandoffOrchestratorAgent:
         orchestration_step: int,
     ) -> tuple[FunctionHandoffCall | None, dict[str, Any]]:
         diagnostics = _empty_diagnostics()
-        messages = [
-            {"role": "system", "content": build_function_handoff_orchestrator_prompt()},
-            {
-                "role": "user",
-                "content": build_function_handoff_state_message(
-                    role="orchestrator",
-                    user_query=user_query,
-                    state_packet=build_function_handoff_state_packet(
-                        user_query=user_query,
-                        current_role="orchestrator",
-                        current_message="",
-                        context=context,
-                    ),
-                ),
-            },
-        ]
         for attempt in range(max_parse_retries + 1):
+            messages = [
+                {"role": "system", "content": build_function_handoff_orchestrator_prompt()},
+                {
+                    "role": "user",
+                    "content": build_function_handoff_state_message(
+                        role="orchestrator",
+                        user_query=user_query,
+                        state_packet=build_function_handoff_state_packet(
+                            user_query=user_query,
+                            current_role="orchestrator",
+                            current_message="",
+                            context=context,
+                        ),
+                    ),
+                },
+            ]
             raw = self.model.generate(
                 messages,
                 max_new_tokens=self.max_new_tokens,
@@ -204,22 +205,23 @@ class LLMFunctionHandoffOrchestratorAgent:
                     return parsed.call, diagnostics
                 diagnostics["invalid_function_name_count"] += 1
                 diagnostics["forbidden_function_call_count"] += 1
-                messages.append(
+                context.setdefault("function_runtime_feedback", []).append(
                     {
-                        "role": "user",
-                        "content": build_function_handoff_repair_message(
-                            "orchestrator",
-                            error,
+                        "kind": "orchestrator_repair",
+                        "role": "orchestrator",
+                        "message": build_function_handoff_repair_message(
+                            "orchestrator", error
                         ),
                     }
                 )
                 diagnostics["repair_attempt_count"] += 1
                 continue
             _accumulate_parse_error(diagnostics, parsed.error_code)
-            messages.append(
+            context.setdefault("function_runtime_feedback", []).append(
                 {
-                    "role": "user",
-                    "content": build_function_handoff_repair_message(
+                    "kind": "orchestrator_repair",
+                    "role": "orchestrator",
+                    "message": build_function_handoff_repair_message(
                         "orchestrator",
                         parsed.error_message or "Invalid function call.",
                     ),
@@ -273,7 +275,8 @@ class LLMFunctionHandoffRoleAgent:
                 state_packet=build_function_handoff_state_packet(
                     user_query=user_query,
                     current_role=self.role,
-                    current_message=message,
+                    current_message="",
+                    ignored_handoff_message=message,
                     context=context,
                     current_role_successful_tool_calls=current_role_successful_tool_calls,
                     current_role_tool_observations=current_role_tool_observations,
@@ -281,15 +284,15 @@ class LLMFunctionHandoffRoleAgent:
                 ),
             )
 
-        messages = [
-            {"role": "system", "content": build_function_handoff_role_prompt(self.role)},
-            {"role": "user", "content": state_message()},
-        ]
         consecutive_parse_errors = 0
         tool_call_count = 0
         previous_successful_final_tool = False
 
         for step in range(1, self.max_role_steps + 1):
+            messages = [
+                {"role": "system", "content": build_function_handoff_role_prompt(self.role)},
+                {"role": "user", "content": state_message()},
+            ]
             raw = self.model.generate(
                 messages,
                 max_new_tokens=self.max_new_tokens,
@@ -330,10 +333,11 @@ class LLMFunctionHandoffRoleAgent:
                     output.message = parsed.error_message or "Parse failed."
                     return output
                 output.repair_attempt_count += 1
-                messages.append(
+                context.setdefault("function_runtime_feedback", []).append(
                     {
-                        "role": "user",
-                        "content": build_function_handoff_repair_message(
+                        "kind": "role_repair",
+                        "role": self.role,
+                        "message": build_function_handoff_repair_message(
                             self.role,
                             parsed.error_message or "Invalid function call.",
                         ),
@@ -353,10 +357,11 @@ class LLMFunctionHandoffRoleAgent:
                 role_step["error_message"] = validation_error
                 output.role_steps.append(role_step)
                 output.repair_attempt_count += 1
-                messages.append(
+                context.setdefault("function_runtime_feedback", []).append(
                     {
-                        "role": "user",
-                        "content": build_function_handoff_repair_message(
+                        "kind": "role_repair",
+                        "role": self.role,
+                        "message": build_function_handoff_repair_message(
                             self.role,
                             validation_error,
                         ),
@@ -372,10 +377,11 @@ class LLMFunctionHandoffRoleAgent:
                     role_step["error_message"] = return_error
                     output.role_steps.append(role_step)
                     output.repair_attempt_count += 1
-                    messages.append(
+                    context.setdefault("function_runtime_feedback", []).append(
                         {
-                            "role": "user",
-                            "content": build_function_handoff_repair_message(
+                            "kind": "role_repair",
+                            "role": self.role,
+                            "message": build_function_handoff_repair_message(
                                 self.role,
                                 return_error,
                             ),
@@ -424,10 +430,11 @@ class LLMFunctionHandoffRoleAgent:
                 attempted_call["status"] = "unregistered_tool"
                 output.failed_tec_tool_calls.append(attempted_call)
                 output.role_steps.append(role_step)
-                messages.append(
+                context.setdefault("function_runtime_feedback", []).append(
                     {
-                        "role": "user",
-                        "content": build_function_handoff_repair_message(
+                        "kind": "role_repair",
+                        "role": self.role,
+                        "message": build_function_handoff_repair_message(
                             self.role,
                             f"Tool {call.name!r} is not registered.",
                         ),
@@ -471,12 +478,6 @@ class LLMFunctionHandoffRoleAgent:
                 output.tool_observations.append(observation)
                 output.role_steps.append(role_step)
                 output.repair_attempt_count += 1
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": state_message(),
-                    }
-                )
                 continue
 
             key = tool_call_key(call.name, call.arguments)
@@ -525,12 +526,6 @@ class LLMFunctionHandoffRoleAgent:
                     output.message = "Repeated identical successful tool call caused a stall."
                     return output
                 output.repair_attempt_count += 1
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": state_message(),
-                    }
-                )
                 continue
 
             if tool_call_count >= self.max_tool_calls:
@@ -587,12 +582,6 @@ class LLMFunctionHandoffRoleAgent:
                 success_record = _last_item(context.get("completed_tool_calls") or [])
                 if isinstance(success_record, dict):
                     current_role_successful_tool_calls.append(success_record)
-            messages.append(
-                {
-                    "role": "user",
-                    "content": state_message(),
-                }
-            )
 
         output.status = "failed"
         output.message = f"Exceeded max_role_steps={self.max_role_steps}."
@@ -673,9 +662,10 @@ class LLMFunctionHandoffMultiAgent:
                 error_message = f"Orchestrator selected invalid function {call.name!r}."
                 break
             message = str(call.arguments.get("message") or "")
+            if message.strip():
+                counters["orchestrator_free_text_ignored_count"] += 1
             role_message_key = (
                 role,
-                " ".join(message.lower().split()),
                 _artifact_state_signature(context),
             )
             if role_message_key in context.setdefault("function_role_message_keys", set()):
@@ -686,7 +676,7 @@ class LLMFunctionHandoffMultiAgent:
                         "kind": "repeated_role_message",
                         "role": role,
                         "message": (
-                            "The same role was called with the same message again "
+                            "The same role was called again "
                             "while runtime-visible state should be inspected."
                         ),
                     }
@@ -834,6 +824,9 @@ class LLMFunctionHandoffMultiAgent:
             orchestrator_equivalent_assignment_without_state_change_count=counters[
                 "orchestrator_equivalent_assignment_without_state_change_count"
             ],
+            orchestrator_free_text_ignored_count=counters[
+                "orchestrator_free_text_ignored_count"
+            ],
             successful_final_tool_without_return_count=counters[
                 "successful_final_tool_without_return_count"
             ],
@@ -878,6 +871,7 @@ def build_function_handoff_state_packet(
     current_role: str,
     current_message: str,
     context: dict[str, Any],
+    ignored_handoff_message: str = "",
     current_role_successful_tool_calls: list[dict[str, Any]] | None = None,
     current_role_tool_observations: list[dict[str, Any]] | None = None,
     current_role_attempted_tec_tool_calls: list[dict[str, Any]] | None = None,
@@ -887,6 +881,7 @@ def build_function_handoff_state_packet(
         "user_query": user_query,
         "current_role": current_role,
         "current_message": current_message,
+        "handoff_text_ignored": bool(str(ignored_handoff_message or "").strip()),
         "parsed_task": _public_parsed_task(context.get("parsed_task") or {}),
         "available_artifacts": available_artifacts,
         "runtime_visible_handles": runtime_visible_handles(context),
@@ -1052,6 +1047,7 @@ def assignment_progress_for_role(role: str, context: dict[str, Any]) -> dict[str
     progress: dict[str, Any] = {
         "requested_regions": requested,
         "covered_regions": [region for region in requested if region in covered],
+        "missing_regions": [region for region in requested if region not in covered],
         "scope_covered": bool(requested)
         and all(region in covered for region in requested),
     }
@@ -1312,6 +1308,7 @@ def build_llm_call_diagnostics(
     """Return compact prompt/generation diagnostics without storing full prompts."""
 
     prompt = _render_prompt_for_diagnostics(model, messages)
+    state_text = _state_message_for_diagnostics(messages)
     before_tokens = _count_tokens(model, prompt)
     max_input_tokens = getattr(model, "max_input_tokens", None)
     after_tokens = (
@@ -1327,6 +1324,9 @@ def build_llm_call_diagnostics(
         "role_step": role_step,
         "attempt": attempt,
         "prompt_character_count": len(prompt),
+        "state_character_count": len(state_text),
+        "state_section_count": state_text.count("\n\n") + 1 if state_text else 0,
+        "state_history_items_included": _count_state_history_items(state_text),
         "prompt_token_count_before_truncation": before_tokens,
         "prompt_token_count_after_truncation": after_tokens,
         "prompt_was_truncated": (
@@ -1357,6 +1357,16 @@ def _count_tokens(model, text: str, *, add_special_tokens: bool = True) -> int |
     tokenizer = getattr(model, "tokenizer", None)
     if tokenizer is None:
         return None
+    if hasattr(tokenizer, "encode"):
+        try:
+            return len(
+                tokenizer.encode(
+                    str(text or ""),
+                    add_special_tokens=add_special_tokens,
+                )
+            )
+        except Exception:
+            pass
     try:
         encoded = tokenizer(
             str(text or ""),
@@ -1371,6 +1381,23 @@ def _count_tokens(model, text: str, *, add_special_tokens: bool = True) -> int |
     if input_ids and isinstance(input_ids[0], list):
         return len(input_ids[0])
     return len(input_ids)
+
+
+def _state_message_for_diagnostics(messages: list[dict[str, str]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return str(message.get("content") or "")
+    return ""
+
+
+def _count_state_history_items(state_text: str) -> int:
+    markers = [
+        '"previous_role_returns"',
+        '"handoff_history"',
+        '"completed_successful_tool_calls"',
+        '"recent_tool_observations"',
+    ]
+    return sum(state_text.count(marker) for marker in markers)
 
 
 def _last_item(items: list[Any]) -> Any:
@@ -1402,6 +1429,7 @@ def _empty_global_counters() -> dict[str, int]:
         "invalid_artifact_handle_count": 0,
         "repeated_role_message_count": 0,
         "orchestrator_equivalent_assignment_without_state_change_count": 0,
+        "orchestrator_free_text_ignored_count": 0,
         "successful_final_tool_without_return_count": 0,
         "data_agent_repeated_retrieval_after_all_assignment_series_present_count": 0,
         "math_repeated_tool_after_terminal_artifact_count": 0,

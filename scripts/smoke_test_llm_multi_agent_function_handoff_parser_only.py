@@ -29,12 +29,14 @@ from tec_agents.agents.llm_multi_agent_function_handoff_prompts import (
 )
 from tec_agents.agents.llm_multi_agent_function_handoff_protocol import (
     FORBIDDEN_PROMPT_KEYS,
+    FUNCTION_HANDOFF_PROTOCOL_VERSION,
     RETURN_FUNCTION,
     clean_function_handoff_output,
     count_tool_call_blocks,
     parse_function_handoff_output,
     role_for_handoff_function,
     validate_function_call_for_role,
+    validate_handoff_arguments,
     validate_role_return,
 )
 
@@ -57,6 +59,12 @@ def test_orchestrator_handoffs() -> None:
         "call_analysis_agent": "analysis_agent",
         "call_report_agent": "report_agent",
     }.items():
+        parsed_empty = parse_function_handoff_output(
+            f'<tool_call>{{"name":"{name}","arguments":{{}}}}</tool_call>'
+        )
+        assert parsed_empty.ok, parsed_empty.to_dict()
+        assert parsed_empty.call is not None
+        assert validate_handoff_arguments(parsed_empty.call.arguments) is None
         parsed = parse_function_handoff_output(
             f'<tool_call>{{"name":"{name}","arguments":{{"message":"work"}}}}</tool_call>'
         )
@@ -64,6 +72,7 @@ def test_orchestrator_handoffs() -> None:
         assert parsed.call is not None
         assert role_for_handoff_function(parsed.call.name) == role
         assert validate_function_call_for_role("orchestrator", parsed.call.name) is None
+        assert validate_handoff_arguments(parsed.call.arguments) is None
     assert validate_function_call_for_role("orchestrator", "tec_get_timeseries")
     assert validate_function_call_for_role("orchestrator", "return_to_orchestrator")
 
@@ -100,7 +109,8 @@ def test_return_to_orchestrator() -> None:
 
 
 def test_grounded_state_packet() -> None:
-    assert PROMPT_REVISION == "function_handoff_grounded_completion_state_v3"
+    assert FUNCTION_HANDOFF_PROTOCOL_VERSION == "function_handoff_v2"
+    assert PROMPT_REVISION == "function_handoff_ultra_simple_state_recipes_v4"
     context = {
         "parsed_task": {
             "task_type": "compare_regions",
@@ -136,7 +146,8 @@ def test_grounded_state_packet() -> None:
     packet = build_function_handoff_state_packet(
         user_query="Compare two regions.",
         current_role="data_agent",
-        current_message="Load missing series.",
+        current_message="",
+        ignored_handoff_message="Load missing series.",
         context=context,
         current_role_successful_tool_calls=[
             {
@@ -168,8 +179,11 @@ def test_grounded_state_packet() -> None:
         "highlat_north",
     ]
     assert packet["assignment_progress"]["covered_regions"] == ["midlat_europe"]
-    assert "missing_regions" not in packet["assignment_progress"]
+    assert packet["assignment_progress"]["missing_regions"] == ["highlat_north"]
     assert packet["assignment_progress"]["scope_covered"] is False
+    assert packet["current_message"] == ""
+    assert packet["handoff_text_ignored"] is True
+    assert "ignored_handoff_message" not in packet
     assert packet["current_role_successful_tool_calls"][0]["tool_name"] == "tec_get_timeseries"
     assert packet["current_role_tool_observations"][0]["artifact_id"] == "series_mid"
     assert packet["current_role_attempted_tec_tool_calls"][0]["status"] == "ok"
@@ -186,8 +200,10 @@ def test_grounded_state_packet() -> None:
         state_packet=packet,
     )
     assert "CURRENT RUNTIME FACTS" in state_text
-    assert "missing_regions" not in state_text
+    assert "STATE_JSON" in state_text
+    assert "missing regions" in state_text
     assert "highlat_north" in state_text
+    assert "Load missing series" not in state_text
     assert "successful TEC calls in this role" in state_text
     assert "recent observations in this role" in state_text
     covered_context = {
@@ -211,6 +227,7 @@ def test_grounded_state_packet() -> None:
         state_packet=covered_packet,
     )
     assert covered_packet["assignment_progress"]["scope_covered"] is True
+    assert covered_packet["assignment_progress"]["missing_regions"] == []
     assert "data assignment complete: call return_to_orchestrator" in covered_text
     math_text = build_function_handoff_state_message(
         role="math_agent",
@@ -225,6 +242,8 @@ def test_grounded_state_packet() -> None:
     assert "math input rule: use only exact handles listed above" in math_text
     assert "series_mid" in math_text
     assert "stats_mid" in math_text
+    assert "handoff_history" not in math_text
+    assert "previous_role_returns" not in math_text
 
 
 def test_invented_handle_detection() -> None:
@@ -346,6 +365,7 @@ def test_prompt_and_state_no_forbidden_hints() -> None:
     orchestrator_prompt = build_function_handoff_orchestrator_prompt()
     assert "call DataAgent, not MathAgent" in orchestrator_prompt
     assert "DataAgent cannot list series IDs" in orchestrator_prompt
+    assert '{"name":"call_data_agent","arguments":{}}' in orchestrator_prompt
     assert "Compare requested regions with covered regions" in build_function_handoff_role_prompt(
         "data_agent"
     )
@@ -355,6 +375,11 @@ def test_prompt_and_state_no_forbidden_hints() -> None:
     assert "Deliverables are outputs to produce, not input handles" in (
         build_function_handoff_role_prompt("math_agent")
     )
+    math_prompt = build_function_handoff_role_prompt("math_agent")
+    assert "State-gated recipes" in math_prompt
+    assert "high_tec: if series_id is visible" in math_prompt
+    assert "stable_intervals: if series_id is visible" in math_prompt
+    assert "compare_regions: if a requested region has series_id" in math_prompt
 
 
 if __name__ == "__main__":

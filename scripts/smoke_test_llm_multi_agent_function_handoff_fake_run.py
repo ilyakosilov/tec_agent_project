@@ -29,6 +29,7 @@ class FakeFunctionHandoffChatModel:
 
     def __init__(self) -> None:
         self.orchestrator_calls = 0
+        self.max_messages_seen = 0
         self.role_calls = {
             "data_agent": 0,
             "math_agent": 0,
@@ -37,6 +38,8 @@ class FakeFunctionHandoffChatModel:
         }
 
     def generate(self, messages, **_: object) -> str:
+        self.max_messages_seen = max(self.max_messages_seen, len(messages))
+        assert len(messages) == 2, "function-handoff v4 must render stateless LLM calls"
         system = str(messages[0]["content"])
         visible = "\n".join(str(message.get("content") or "") for message in messages)
         if "OrchestratorAgent" in system:
@@ -131,6 +134,7 @@ def main() -> None:
             time_column="time",
         )
         test_high_success()
+        test_high_misleading_handoff_text_ignored()
         test_stable_success()
         test_compare_success()
         test_invented_handle_failure()
@@ -181,6 +185,30 @@ def test_high_success() -> None:
     ]
     assert result.llm_call_diagnostics
     assert result.llm_call_diagnostics[0]["caller_role"] == "orchestrator"
+    assert result.orchestrator_free_text_ignored_count == 4
+    assert all(
+        item.get("state_history_items_included", 0) <= 2
+        for item in result.llm_call_diagnostics
+    )
+
+
+def test_high_misleading_handoff_text_ignored() -> None:
+    server = build_local_mcp_server(run_id="smoke_function_handoff_misleading")
+    model = MisleadingHandoffFakeModel()
+    result = _run_fake(
+        model,
+        server,
+        "Find high TEC intervals for midlat_europe from 2024-03-01 "
+        "to 2024-04-01 using q=0.90 threshold.",
+    )
+    assert result.success, result.to_dict()
+    assert result.actual_tool_sequence == [
+        "tec_get_timeseries",
+        "tec_compute_high_threshold",
+        "tec_detect_high_intervals",
+    ]
+    assert result.orchestrator_free_text_ignored_count >= 1
+    assert model.max_messages_seen == 2
 
 
 def test_stable_success() -> None:
@@ -374,6 +402,24 @@ class InventedHandleFakeModel(FakeFunctionHandoffChatModel):
             '<tool_call>{"name":"return_to_orchestrator","arguments":'
             '{"status":"cannot_complete","message":"no visible handles"}}</tool_call>'
         )
+
+
+class MisleadingHandoffFakeModel(FakeFunctionHandoffChatModel):
+    def _orchestrator(self) -> str:
+        self.orchestrator_calls += 1
+        calls = [
+            ("call_data_agent", "Please compute statistics before doing anything else."),
+            ("call_math_agent", "Compute statistics for the series and stop."),
+            ("call_analysis_agent", "Interpret stats only."),
+            ("call_report_agent", "Write final answer."),
+        ]
+        name, message = calls[min(self.orchestrator_calls, len(calls)) - 1]
+        return f'<tool_call>{{"name":"{name}","arguments":{{"message":"{message}"}}}}</tool_call>'
+
+    def _math(self, visible: str) -> str:
+        assert '"current_message"' not in visible
+        assert "Compute statistics for the series and stop" not in visible
+        return super()._math(visible)
 
 
 class TerminalRepeatFakeModel(FakeFunctionHandoffChatModel):

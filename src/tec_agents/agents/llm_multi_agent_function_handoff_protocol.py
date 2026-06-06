@@ -21,7 +21,7 @@ from typing import Any
 from tec_agents.llm.tool_call_parser import ToolCall, parse_tool_call
 
 
-FUNCTION_HANDOFF_PROTOCOL_VERSION = "function_handoff_v1"
+FUNCTION_HANDOFF_PROTOCOL_VERSION = "function_handoff_v2"
 ARCHITECTURE_NAME = "qwen_multi_agent_function_handoff_full_llm"
 
 ROLE_NAMES = {"data_agent", "math_agent", "analysis_agent", "report_agent"}
@@ -200,9 +200,10 @@ def is_tec_tool(function_name: str) -> bool:
 
 
 def validate_handoff_arguments(arguments: dict[str, Any]) -> str | None:
-    message = arguments.get("message")
-    if not isinstance(message, str) or not message.strip():
-        return "Handoff function arguments must contain non-empty string field 'message'."
+    if not isinstance(arguments, dict):
+        return "Handoff function arguments must be an object."
+    if "message" in arguments and not isinstance(arguments.get("message"), str):
+        return "Optional handoff field 'message' must be a string when present."
     return None
 
 

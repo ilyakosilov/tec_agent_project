@@ -20,7 +20,7 @@ from tec_agents.agents.llm_single_agent import safe_compact_json
 from tec_agents.llm.prompts import BASE_DOMAIN_CONTEXT
 
 
-PROMPT_REVISION = "function_handoff_grounded_completion_state_v3"
+PROMPT_REVISION = "function_handoff_ultra_simple_state_recipes_v4"
 
 
 def build_function_handoff_orchestrator_prompt() -> str:
@@ -40,7 +40,7 @@ You may call exactly one internal function per turn:
 
 Function schema:
 <tool_call>
-{{"name":"call_data_agent","arguments":{{"message":"short instruction"}}}}
+{{"name":"call_data_agent","arguments":{{}}}}
 </tool_call>
 
 Role responsibilities:
@@ -50,17 +50,17 @@ Role responsibilities:
 - report_agent writes the user-facing final answer from visible artifacts/findings.
 
 Decision rules:
-- Inspect the user query, actual available artifacts, previous role returns, and handoff history.
-- Choose the role that should work next from the actual state.
+- Inspect the user query, actual available artifacts, and latest role return.
+- Choose a role from the actual state.
 - If no visible series_id exists for the requested region or regions, call DataAgent, not MathAgent.
-- MathAgent can use only visible artifact handles. Region names and dates are not artifact handles.
-- DataAgent cannot list series IDs. Ask DataAgent to load missing time series, not to list handles.
-- If a worker already returned done and no new artifact has appeared, do not repeat the same role/message.
-- When computed artifacts are already visible and math_agent has returned, choose analysis_agent or report_agent from the actual user need.
+- MathAgent works only with visible artifact handles. Region names and dates are not artifact handles.
+- DataAgent cannot list series IDs. It loads time series only.
+- If a worker already returned done and no new artifact has appeared, do not repeat the same role call.
+- When computed artifacts are visible and math_agent has returned, use analysis_agent or report_agent according to the user request.
 - For the final user answer, call ReportAgent. Tool execution alone is not a finished workflow.
-- Do not specify a future role sequence.
-- Do not specify exact TEC tool calls.
-- Do not call the same role with the same message repeatedly if state has not changed.
+- Do not specify future role order.
+- Do not specify TEC tool calls in handoff arguments.
+- Function arguments may be empty. Worker roles ignore handoff free text and read CURRENT FACTS.
 - The run is complete only when report_agent returns final_answer to the runtime.
 
 Forbidden:
@@ -99,6 +99,7 @@ When your role is done or blocked, call:
 
 Never call role names as functions. Never call role_response, role_action, or final_answer.
 Do not use evaluator-only hidden data.
+Ignore any handoff free text. Use only CURRENT FACTS and the role recipe.
 """.strip()
 
     if role == "data_agent":
@@ -123,6 +124,12 @@ Completion:
 - Do not return done when requested regions have no visible series_id.
 - Do not repeat tec_get_timeseries for a region that is already covered.
 - Do not call tec_series_profile unless profiling is explicitly requested.
+
+Few-shot examples:
+1. Facts: requested_regions=["midlat_europe"], covered_regions=[].
+Output: tec_get_timeseries for midlat_europe.
+2. Facts: requested_regions=["midlat_europe"], covered_regions=["midlat_europe"], scope_covered=true.
+Output: return_to_orchestrator done.
 """.strip(),
             ]
         )
@@ -152,6 +159,24 @@ Important:
 - Do not repeat a tool call that already succeeded for the same visible handles.
 - For comparison, do not recompute stats for a series when a visible stats_id for that series already exists.
 - After useful computation is done or you are blocked, call return_to_orchestrator.
+
+State-gated recipes:
+- high_tec: if series_id is visible and high threshold is absent, use tec_compute_high_threshold. If high threshold is visible and high_intervals are absent, use tec_detect_high_intervals. If high_intervals are visible, return_to_orchestrator.
+- stable_intervals: if series_id is visible and stability threshold is absent, use tec_compute_stability_thresholds. If stability threshold is visible and stable_intervals are absent, use tec_detect_stable_intervals. If stable_intervals are visible, return_to_orchestrator.
+- compare_regions: if a requested region has series_id but no stats_id, use tec_compute_series_stats for one such series. If stats_id exists for every requested region and comparison_id is absent, use tec_compare_stats. If comparison_id is visible, return_to_orchestrator.
+- report: use visible state to prepare useful missing ingredients for the report: basic stats, high intervals, and stable intervals. Return after useful progress or when blocked.
+
+Few-shot examples:
+1. Task high_tec, series visible, no threshold, no high_intervals.
+Output: tec_compute_high_threshold with that series_id.
+2. Task high_tec, series and high threshold visible, no high_intervals.
+Output: tec_detect_high_intervals with that series_id and threshold_id.
+3. Task high_tec, high_intervals visible.
+Output: return_to_orchestrator done.
+4. Task compare_regions, two series visible, no stats.
+Output: tec_compute_series_stats for one visible series_id.
+5. Task compare_regions, stats visible for all requested regions, no comparison.
+Output: tec_compare_stats with visible stats_ids.
 """.strip(),
             ]
         )
@@ -209,6 +234,7 @@ def build_function_handoff_state_message(
     else:
         header = f"State for {role}."
     facts = _runtime_fact_lines(role=role, state_packet=safe_packet)
+    compact_packet = _compact_state_json(role=role, state_packet=safe_packet)
     return "\n".join(
         [
             header,
@@ -217,7 +243,8 @@ def build_function_handoff_state_message(
             "CURRENT RUNTIME FACTS",
             *facts,
             "",
-            safe_compact_json(safe_packet),
+            "STATE_JSON",
+            safe_compact_json(compact_packet),
             "",
             "Return exactly one <tool_call> block.",
         ]
@@ -264,6 +291,7 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
 
     lines = [
         f"- task: {parsed.get('task_type')} regions={parsed.get('region_ids') or parsed.get('region_id')} period=[{parsed.get('start')}, {parsed.get('end')})",
+        f"- handoff_text_ignored: {bool(state_packet.get('handoff_text_ignored'))}",
         f"- visible series_id: {_format_handles(handles.get('series_id'))}",
         f"- visible stats_id: {_format_handles(handles.get('stats_id'))}",
         f"- visible threshold_id: {_format_handles(handles.get('threshold_id'))}",
@@ -280,6 +308,7 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
             [
                 f"- requested regions: {progress.get('requested_regions') or []}",
                 f"- covered regions: {progress.get('covered_regions') or []}",
+                f"- missing regions: {progress.get('missing_regions') or []}",
                 f"- scope_covered: {bool(progress.get('scope_covered'))}",
             ]
         )
@@ -295,6 +324,30 @@ def _runtime_fact_lines(*, role: str, state_packet: dict[str, Any]) -> list[str]
     for item in feedback[-3:]:
         lines.append(f"- runtime feedback: {item.get('message') or item}")
     return lines
+
+
+def _compact_state_json(*, role: str, state_packet: dict[str, Any]) -> dict[str, Any]:
+    """Small prompt-visible packet; full history stays in JSON results only."""
+
+    return {
+        "current_role": state_packet.get("current_role"),
+        "parsed_task": state_packet.get("parsed_task") or {},
+        "runtime_visible_handles": state_packet.get("runtime_visible_handles") or {},
+        "assignment_progress": state_packet.get("assignment_progress") or {},
+        "current_role_successful_tool_calls": (
+            state_packet.get("current_role_successful_tool_calls") or []
+        )[-3:],
+        "current_role_tool_observations": (
+            state_packet.get("current_role_tool_observations") or []
+        )[-3:],
+        "current_role_attempted_tec_tool_calls": (
+            state_packet.get("current_role_attempted_tec_tool_calls") or []
+        )[-3:],
+        "last_role_return": state_packet.get("last_role_return"),
+        "runtime_feedback": (state_packet.get("runtime_feedback") or [])[-3:],
+        "recent_tool_observations": (state_packet.get("recent_tool_observations") or [])[-3:],
+        "handoff_text_ignored": bool(state_packet.get("handoff_text_ignored")),
+    }
 
 
 def _format_handles(value: Any) -> str:
